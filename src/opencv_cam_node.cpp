@@ -87,17 +87,14 @@ namespace opencv_cam
       next_stamp_ = now();
 
     } else {
+      capture_ = std::make_shared<cv::VideoCapture>(cxt_.device_, cv::CAP_V4L2);
       if (see3cam_flag_) {
-        capture_ = std::make_shared<cv::VideoCapture>(cxt_.index_, cv::CAP_V4L2);
         capture_->set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y','1','6',' '));
         capture_->set(cv::CAP_PROP_CONVERT_RGB, false);
       }
-      else {
-        capture_ = std::make_shared<cv::VideoCapture>(cxt_.index_);
-      }
 
       if (!capture_->isOpened()) {
-        RCLCPP_ERROR(get_logger(), "cannot open device %d", cxt_.index_);
+        RCLCPP_ERROR(get_logger(), "cannot open device %s", cxt_.device_.c_str());
         return;
       }
 
