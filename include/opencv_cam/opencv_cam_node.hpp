@@ -1,7 +1,7 @@
 #ifndef OPENCV_CAM_HPP
 #define OPENCV_CAM_HPP
 
-
+#include <opencv2/imgproc.hpp>
 #include "opencv2/highgui/highgui.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
@@ -24,8 +24,10 @@ namespace opencv_cam
 
     int publish_fps_;
     rclcpp::Time next_stamp_;
+    bool see3cam_flag_;
 
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_ir_pub_;
     rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
 
   public:
@@ -37,6 +39,7 @@ namespace opencv_cam
   private:
 
     void validate_parameters();
+    bool SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat* IRImageCU83, cv::Mat* RGBImageCU83, int *RGBBufferSizeCU83, int *IRBufferSizeCU83);
 
     void loop();
   };

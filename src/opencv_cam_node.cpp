@@ -3,6 +3,10 @@
 #include <iostream>
 
 #include "camera_calibration_parsers/parse.hpp"
+#include <sensor_msgs/image_encodings.hpp>
+
+#define BYTE __uint8_t
+
 
 namespace opencv_cam
 {
@@ -51,6 +55,13 @@ namespace opencv_cam
 
     RCLCPP_INFO(get_logger(), "OpenCV version %d", CV_VERSION_MAJOR);
 
+    // Check if see3cam camera is used
+    if (cxt_.camera_frame_id_.find("see3") != std::string::npos) {
+      see3cam_flag_ = true;
+    } else {
+      see3cam_flag_ = false;
+    }
+
     // Open file or device
     if (cxt_.file_) {
       capture_ = std::make_shared<cv::VideoCapture>(cxt_.filename_);
@@ -76,7 +87,14 @@ namespace opencv_cam
       next_stamp_ = now();
 
     } else {
-      capture_ = std::make_shared<cv::VideoCapture>(cxt_.index_);
+      if (see3cam_flag_) {
+        capture_ = std::make_shared<cv::VideoCapture>(cxt_.index_, cv::CAP_V4L2);
+        capture_->set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y','1','6',' '));
+        capture_->set(cv::CAP_PROP_CONVERT_RGB, false);
+      }
+      else {
+        capture_ = std::make_shared<cv::VideoCapture>(cxt_.index_);
+      }
 
       if (!capture_->isOpened()) {
         RCLCPP_ERROR(get_logger(), "cannot open device %d", cxt_.index_);
@@ -114,6 +132,9 @@ namespace opencv_cam
     }
 
     image_pub_ = create_publisher<sensor_msgs::msg::Image>("image_raw", 10);
+    if (see3cam_flag_) {
+      image_ir_pub_ = create_publisher<sensor_msgs::msg::Image>("image_ir_raw", 10);
+    }
 
     // Run loop on it's own thread
     thread_ = std::thread(std::bind(&OpencvCamNode::loop, this));
@@ -133,6 +154,99 @@ namespace opencv_cam
   void OpencvCamNode::validate_parameters()
   {}
 
+  bool OpencvCamNode::SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat* IRImageCU83, cv::Mat* RGBImageCU83, int *RGBBufferSizeCU83, int *IRBufferSizeCU83)
+  {
+    uchar* RGBIRBuff = frame.data;
+    // int long size = Frame.cols*Frame.rows * 2;
+
+    int Buffcnt = 0;
+    int cnt = 0;
+    int RGBBufsize = 0;
+    //Changed the datatype from UINT32 to uint32_t - commented by Sushanth
+    //Reason - compatible for both linux & windows
+    uint32_t IrBufsize = 0;
+    int rgbcnt = 0, Ircnt = 0;
+    BYTE * IRBuff = NULL;
+    IRBuff = (BYTE*)malloc(1920 * 1080 * 2);
+    int long BuffSize = 3120 * 1080 * 2;
+
+    if (true)
+    // if ((Frame.cols == 3120 && Frame.rows == 1080)) // Later bring back handling different dual images
+    {
+      // int rgbbuffsize = 1920 * 1080 * 2;
+      // int irbuffsize = 2592000;
+
+      while (BuffSize > 0)
+      {
+        if ((RGBIRBuff[Buffcnt] & 0x03) == 0x00)
+        {
+          memcpy(RGBImageCU83->data + (RGBBufsize), RGBIRBuff + Buffcnt, 3839);
+          Buffcnt += 3840;
+          RGBBufsize += 3840;
+          BuffSize -= 3840;
+          rgbcnt += 1;
+        }
+        else if ((RGBIRBuff[Buffcnt] & 0x03) == 0x03)
+        {
+          memcpy(IRBuff + (IrBufsize), RGBIRBuff + Buffcnt, 2399);
+          IrBufsize += 2400;
+          Buffcnt += 2400;
+          BuffSize -= 2400;
+          Ircnt += 1;
+        }
+        else
+        {
+          return 1;
+        }
+        cnt++;
+      }
+    }
+    // else
+    // {
+    // 	while (size > 0)
+    // 	{
+    // 		if ((RGBIRBuff[Buffcnt] & 0x03) == 0x00)
+    // 		{
+    // 			memcpy(RGBImageCU83->data + (RGBBufsize), RGBIRBuff + Buffcnt, 7679);
+    // 			Buffcnt += 7680;
+    // 			RGBBufsize += 7680;
+    // 			size -= 7680;
+    // 			rgbcnt += 1;
+    // 		}
+    // 		else if ((RGBIRBuff[Buffcnt] & 0x03) == 0x03)
+    // 		{
+    // 			memcpy(IRBuff + (IrBufsize), RGBIRBuff + Buffcnt, 2399);
+    // 			IrBufsize += 2400;
+    // 			Buffcnt += 2400;
+    // 			size -= 2400;
+    // 			Ircnt += 1;
+    // 		}
+    // 		else
+    // 		{
+    // 			return 0;
+    // 		}
+    // 		cnt++;
+    // 	}
+    // }
+
+    int bufsize_IR = 0;
+    Buffcnt = 0;
+    while (IrBufsize > 0)
+    {
+      memcpy(IRImageCU83->data + (bufsize_IR), IRBuff + Buffcnt, 4);
+      bufsize_IR += 4;
+      Buffcnt += 5;
+      IrBufsize -= 5;
+    }
+    Buffcnt = 0;
+
+    *RGBBufferSizeCU83 = RGBBufsize;
+    *IRBufferSizeCU83 = IrBufsize;
+    free(IRBuff);
+    // IRBuff = NULL; //Added by Sushanth - Assigning IRBuff to NULL when it is freed.
+    return 1;
+  }
+
   void OpencvCamNode::loop()
   {
     cv::Mat frame;
@@ -145,6 +259,57 @@ namespace opencv_cam
       }
 
       auto stamp = now();
+
+      if (see3cam_flag_) {
+        // separate dual image RGB/IR
+        cv::Mat RGBImageCU83 = cv::Mat(1080, 1920, CV_8UC2); //allocation
+        cv::Mat IRImageCU83 = cv::Mat(1080, 1920, CV_8UC1);
+        int RGBBufferSizeCU83, IRBufferSizeCU83 = 0;
+        cv::Mat ResultImage;
+        if (SeparatingRGBIRBuffers(frame, &IRImageCU83, &RGBImageCU83, &RGBBufferSizeCU83, &IRBufferSizeCU83) == 1)
+        {
+          if (!RGBImageCU83.empty())
+          {
+            cvtColor(RGBImageCU83, ResultImage, cv::COLOR_YUV2BGR_UYVY);
+
+            // Avoid copying image message if possible
+            sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
+
+            // Convert OpenCV Mat to ROS Image
+            image_msg->header.stamp = stamp;
+            image_msg->header.frame_id = cxt_.camera_frame_id_;
+            image_msg->height = ResultImage.rows;
+            image_msg->width = ResultImage.cols;
+            image_msg->encoding = sensor_msgs::image_encodings::BGR8;
+            image_msg->is_bigendian = false;
+            image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(ResultImage.step);
+            image_msg->data.assign(ResultImage.datastart, ResultImage.dataend);
+            image_pub_->publish(std::move(image_msg));
+            
+          }
+          if (!IRImageCU83.empty())
+          {
+            // Avoid copying image message if possible
+            sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
+
+            // Convert OpenCV Mat to ROS Image
+            image_msg->header.stamp = stamp;
+            image_msg->header.frame_id = cxt_.camera_frame_id_;
+            image_msg->height = IRImageCU83.rows;
+            image_msg->width = IRImageCU83.cols;
+            image_msg->encoding = sensor_msgs::image_encodings::MONO8;
+            image_msg->is_bigendian = false;
+            image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(IRImageCU83.step);
+            image_msg->data.assign(IRImageCU83.datastart, IRImageCU83.dataend);
+            image_ir_pub_->publish(std::move(image_msg));
+          }
+        }
+        else
+        {
+          std::cout << "SeparatingRGBIRBuffers failed" << std::endl;
+        }
+      }
+      else {
 
       // Avoid copying image message if possible
       sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
@@ -171,6 +336,7 @@ namespace opencv_cam
         camera_info_msg_.header.stamp = stamp;
         camera_info_pub_->publish(camera_info_msg_);
       }
+    }
 
       // Sleep if required
       if (cxt_.file_) {
