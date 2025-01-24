@@ -16,6 +16,7 @@ namespace opencv_cam
   CXT_MACRO_MEMBER(filename, std::string, "")                     /* Filename */ \
   \
   CXT_MACRO_MEMBER(index, int, 0)                                 /* Device index, see cv::VideoCaptureAPIs */ \
+  CXT_MACRO_MEMBER(device, std::string, "")                       /* Device name */ \
   CXT_MACRO_MEMBER(width, int, 0)                                 /* Device width */ \
   CXT_MACRO_MEMBER(height, int, 0)                                /* Device height */ \
   \

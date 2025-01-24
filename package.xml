@@ -4,7 +4,7 @@
 
     <name>opencv_cam</name>
     <version>0.2.0</version>
-    <description>OpenCV camera driver</description>
+    <description>OpenCV and See3cam_CU83 ROS2 camera driver</description>
 
     <maintainer email="clyde@mcqueen.net">Clyde McQueen</maintainer>
     <license>BSD</license>
