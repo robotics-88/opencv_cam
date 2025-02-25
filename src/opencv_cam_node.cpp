@@ -393,6 +393,9 @@ namespace opencv_cam
         RCLCPP_ERROR(this->get_logger(), "Failed to open video file for writing.");
         return false;
     }
+    else {
+      RCLCPP_INFO(this->get_logger(), "Started recording to %s", filename.c_str());
+    }
 
     if (see3cam_flag_) {
       std::string filename_ir = filename.substr(0, filename.find_last_of(".")) + "_ir.mp4";
@@ -403,13 +406,15 @@ namespace opencv_cam
 
       if (!video_writer_ir_.isOpened())
       {
-      RCLCPP_ERROR(this->get_logger(), "Failed to open video file for writing.");
-      return false;
+        RCLCPP_ERROR(this->get_logger(), "Failed to open video file for writing.");
+        return false;
+      }
+      else {
+        RCLCPP_INFO(this->get_logger(), "Started recording to %s", filename_ir.c_str());
       }
     }
 
     recording_ = true;
-    RCLCPP_INFO(this->get_logger(), "Started recording to %s", filename.c_str());
     return true;
   }
 
