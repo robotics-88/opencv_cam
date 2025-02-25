@@ -34,6 +34,7 @@ namespace opencv_cam
     rclcpp::Service<messages_88::srv::RecordVideo>::SharedPtr record_service_;
 
     cv::VideoWriter video_writer_;
+    cv::VideoWriter video_writer_ir_;
 
     bool recording_;
 
