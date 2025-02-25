@@ -133,10 +133,58 @@ namespace opencv_cam
       image_ir_pub_ = create_publisher<sensor_msgs::msg::Image>("image_ir_raw", 10);
     }
 
+    // Video recorder service
+    record_service_ = this->create_service<messages_88::srv::RecordVideo>("~/record", std::bind(&OpencvCamNode::recordVideoCallback, this, std::placeholders::_1, std::placeholders::_2));
+
     // Run loop on it's own thread
     thread_ = std::thread(std::bind(&OpencvCamNode::loop, this));
 
     RCLCPP_INFO(get_logger(), "start publishing");
+  }
+
+  bool OpencvCamNode::recordVideoCallback(const std::shared_ptr<messages_88::srv::RecordVideo::Request> req,
+    std::shared_ptr<messages_88::srv::RecordVideo::Response> resp) {
+    bool success;
+    if (req->start)
+    success = startRecording(req->filename);
+    else
+    success = stopRecording();
+
+    resp->success = success;
+    return success;
+  }
+
+  bool OpencvCamNode::startRecording(const std::string &filename) {
+    if (recording_)
+    {
+        RCLCPP_WARN(this->get_logger(), "Already recording!");
+        return false;
+    }
+
+    video_writer_.open(filename, 
+                        cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
+                        (double)cxt_.fps_, 
+                        cv::Size(cxt_.width_, cxt_.height_));
+
+    if (!video_writer_.isOpened())
+    {
+        RCLCPP_ERROR(this->get_logger(), "Failed to open video file for writing.");
+        return false;
+    }
+
+    recording_ = true;
+    RCLCPP_INFO(this->get_logger(), "Started recording to %s", filename.c_str());
+    return true;
+  }
+
+  bool OpencvCamNode::stopRecording() {
+    if (recording_)
+    {
+        video_writer_.release();
+        recording_ = false;
+        RCLCPP_INFO(this->get_logger(), "Stopped recording.");
+    }
+    return true;
   }
 
   OpencvCamNode::~OpencvCamNode()
@@ -309,29 +357,44 @@ namespace opencv_cam
       else {
 
       // Avoid copying image message if possible
-      sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
+      sensor_msgs::msg::Image::UniquePtr image_ptr(new sensor_msgs::msg::Image());
 
       // Convert OpenCV Mat to ROS Image
-      image_msg->header.stamp = stamp;
-      image_msg->header.frame_id = cxt_.camera_frame_id_;
-      image_msg->height = frame.rows;
-      image_msg->width = frame.cols;
-      image_msg->encoding = mat_type2encoding(frame.type());
-      image_msg->is_bigendian = false;
-      image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
-      image_msg->data.assign(frame.datastart, frame.dataend);
+      image_ptr->header.stamp = stamp;
+      image_ptr->header.frame_id = cxt_.camera_frame_id_;
+      image_ptr->height = frame.rows;
+      image_ptr->width = frame.cols;
+      image_ptr->encoding = mat_type2encoding(frame.type());
+      image_ptr->is_bigendian = false;
+      image_ptr->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
+      image_ptr->data.assign(frame.datastart, frame.dataend);
 
 #undef SHOW_ADDRESS
 #ifdef SHOW_ADDRESS
       static int count = 0;
-      RCLCPP_INFO(get_logger(), "%d, %p", count++, reinterpret_cast<std::uintptr_t>(image_msg.get()));
+      RCLCPP_INFO(get_logger(), "%d, %p", count++, reinterpret_cast<std::uintptr_t>(image_ptr.get()));
 #endif
 
+      sensor_msgs::msg::Image image_msg = std::move(*image_ptr);
+
       // Publish
-      image_pub_->publish(std::move(image_msg));
+      image_pub_->publish(image_msg);
       if (camera_info_pub_) {
         camera_info_msg_.header.stamp = stamp;
         camera_info_pub_->publish(camera_info_msg_);
+      }
+
+      // Record
+      if (recording_) {
+        try
+        {
+          cv::Mat frame = cv_bridge::toCvCopy(image_msg, image_msg.encoding)->image;
+          video_writer_.write(frame);
+        }
+        catch (cv_bridge::Exception &e)
+        {
+          RCLCPP_ERROR(this->get_logger(), "cv_bridge exception: %s", e.what());
+        }
       }
     }
 
