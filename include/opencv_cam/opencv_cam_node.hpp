@@ -9,7 +9,6 @@
 #include "messages_88/srv/record_video.hpp"
 
 #include "opencv_cam/camera_context.hpp"
-#include <cv_bridge/cv_bridge.h>
 
 namespace opencv_cam
 {
