@@ -260,6 +260,8 @@ namespace opencv_cam
 
       auto stamp = now();
 
+      std::lock_guard<std::mutex> lock(record_mutex_);
+
       if (see3cam_flag_) {
         // separate dual image RGB/IR
         cv::Mat RGBImageCU83 = cv::Mat(1080, 1920, CV_8UC2); //allocation
@@ -347,6 +349,7 @@ namespace opencv_cam
 
       // Record frame to video file
       if (recording_) {
+        std::cout << "Attempting write" << std::endl;
         video_writer_.write(frame);
       }
 
@@ -367,6 +370,9 @@ namespace opencv_cam
   bool OpencvCamNode::recordVideoCallback(const std::shared_ptr<messages_88::srv::RecordVideo::Request> req,
     std::shared_ptr<messages_88::srv::RecordVideo::Response> resp) {
     bool success;
+
+    // Use lock guard here to ensure thread safety with main loop which operates in its own thread
+    std::lock_guard<std::mutex> lock(record_mutex_);
     if (req->start)
       success = startRecording(req->filename);
     else
