@@ -349,7 +349,6 @@ namespace opencv_cam
 
       // Record frame to video file
       if (recording_) {
-        std::cout << "Attempting write" << std::endl;
         video_writer_.write(frame);
       }
 
