@@ -22,7 +22,8 @@ int main(int argc, char **argv)
   // Spin until rclcpp::ok() returns false
   executor.spin();
 
-  // Shut down ROS
+  // Shut down ROS and stop recording
+  node->stopRecording();
   rclcpp::shutdown();
 
   return 0;

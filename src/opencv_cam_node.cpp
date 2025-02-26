@@ -133,6 +133,9 @@ namespace opencv_cam
       image_ir_pub_ = create_publisher<sensor_msgs::msg::Image>("image_ir_raw", 10);
     }
 
+    // Video recorder service
+    record_service_ = this->create_service<messages_88::srv::RecordVideo>("~/record", std::bind(&OpencvCamNode::recordVideoCallback, this, std::placeholders::_1, std::placeholders::_2));
+
     // Run loop on it's own thread
     thread_ = std::thread(std::bind(&OpencvCamNode::loop, this));
 
@@ -282,6 +285,10 @@ namespace opencv_cam
             image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(ResultImage.step);
             image_msg->data.assign(ResultImage.datastart, ResultImage.dataend);
             image_pub_->publish(std::move(image_msg));
+
+            if (recording_) {
+              video_writer_.write(RGBImageCU83);
+            }
             
           }
           if (!IRImageCU83.empty())
@@ -299,6 +306,10 @@ namespace opencv_cam
             image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(IRImageCU83.step);
             image_msg->data.assign(IRImageCU83.datastart, IRImageCU83.dataend);
             image_ir_pub_->publish(std::move(image_msg));
+
+            if (recording_) {
+              video_writer_ir_.write(IRImageCU83);
+            }
           }
         }
         else
@@ -333,6 +344,12 @@ namespace opencv_cam
         camera_info_msg_.header.stamp = stamp;
         camera_info_pub_->publish(camera_info_msg_);
       }
+
+      // Record frame to video file
+      if (recording_) {
+        video_writer_.write(frame);
+      }
+
     }
 
       // Sleep if required
@@ -345,6 +362,70 @@ namespace opencv_cam
         }
       }
     }
+  }
+
+  bool OpencvCamNode::recordVideoCallback(const std::shared_ptr<messages_88::srv::RecordVideo::Request> req,
+    std::shared_ptr<messages_88::srv::RecordVideo::Response> resp) {
+    bool success;
+    if (req->start)
+      success = startRecording(req->filename);
+    else
+      success = stopRecording();
+
+    resp->success = success;
+    return success;
+  }
+
+  bool OpencvCamNode::startRecording(const std::string &filename) {
+    if (recording_)
+    {
+        RCLCPP_WARN(this->get_logger(), "Already recording!");
+        return false;
+    }
+
+    video_writer_.open(filename, 
+                        cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
+                        (double)cxt_.fps_, 
+                        cv::Size(cxt_.width_, cxt_.height_));
+
+    if (!video_writer_.isOpened())
+    {
+        RCLCPP_ERROR(this->get_logger(), "Failed to open video file for writing.");
+        return false;
+    }
+    else {
+      RCLCPP_INFO(this->get_logger(), "Started recording to %s", filename.c_str());
+    }
+
+    if (see3cam_flag_) {
+      std::string filename_ir = filename.substr(0, filename.find_last_of(".")) + "_ir.mp4";
+      video_writer_ir_.open(filename_ir, 
+        cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
+        (double)cxt_.fps_, 
+        cv::Size(cxt_.width_, cxt_.height_));
+
+      if (!video_writer_ir_.isOpened())
+      {
+        RCLCPP_ERROR(this->get_logger(), "Failed to open video file for writing.");
+        return false;
+      }
+      else {
+        RCLCPP_INFO(this->get_logger(), "Started recording to %s", filename_ir.c_str());
+      }
+    }
+
+    recording_ = true;
+    return true;
+  }
+
+  bool OpencvCamNode::stopRecording() {
+    if (recording_)
+    {
+      video_writer_.release();
+      recording_ = false;
+      RCLCPP_INFO(this->get_logger(), "Stopped recording.");
+    }
+    return true;
   }
 
 } // namespace opencv_cam
