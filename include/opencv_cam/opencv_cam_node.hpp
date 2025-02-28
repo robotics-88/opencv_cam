@@ -37,6 +37,8 @@ namespace opencv_cam
 
     bool recording_;
 
+    std::mutex record_mutex_;
+
   public:
 
     explicit OpencvCamNode(const rclcpp::NodeOptions &options);
