@@ -1,12 +1,16 @@
 #ifndef OPENCV_CAM_HPP
 #define OPENCV_CAM_HPP
 
+#include <fstream>
+
 #include <opencv2/imgproc.hpp>
 #include "opencv2/highgui/highgui.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "messages_88/srv/record_video.hpp"
+#include <tf2_ros/buffer.h>
+#include <tf2_ros/transform_listener.h>
 
 #include "opencv_cam/camera_context.hpp"
 
@@ -32,8 +36,15 @@ namespace opencv_cam
     rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
     rclcpp::Service<messages_88::srv::RecordVideo>::SharedPtr record_service_;
 
+    std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
+    std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
+
     cv::VideoWriter video_writer_;
     cv::VideoWriter video_writer_ir_;
+
+    std::string map_frame_;
+    std::ofstream pose_file_;
+    int frame_count_;
 
     bool recording_;
 
@@ -47,6 +58,7 @@ namespace opencv_cam
 
     bool startRecording(const std::string &filename);
     bool stopRecording();
+    void writeToPoseFile(rclcpp::Time stamp);
 
   private:
 

@@ -28,9 +28,15 @@ namespace opencv_cam
   }
 
   OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options) :
-    Node("opencv_cam", options),
-    canceled_(false)
+    Node("opencv_cam", options)
+    , map_frame_("map")
+    , recording_(false)
+    , frame_count_(0)
+    , canceled_(false)
   {
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
     RCLCPP_INFO(get_logger(), "use_intra_process_comms=%d", options.use_intra_process_comms());
 
     // Initialize parameters
@@ -270,6 +276,7 @@ namespace opencv_cam
         cv::Mat ResultImage;
         if (SeparatingRGBIRBuffers(frame, &IRImageCU83, &RGBImageCU83, &RGBBufferSizeCU83, &IRBufferSizeCU83) == 1)
         {
+          bool pose_written = false;
           if (!RGBImageCU83.empty())
           {
             cvtColor(RGBImageCU83, ResultImage, cv::COLOR_YUV2BGR_UYVY);
@@ -290,6 +297,8 @@ namespace opencv_cam
 
             if (recording_) {
               video_writer_.write(RGBImageCU83);
+              writeToPoseFile(stamp);
+              pose_written = true;
             }
             
           }
@@ -311,6 +320,8 @@ namespace opencv_cam
 
             if (recording_) {
               video_writer_ir_.write(IRImageCU83);
+              if (!pose_written)
+                writeToPoseFile(stamp);
             }
           }
         }
@@ -321,38 +332,42 @@ namespace opencv_cam
       }
       else {
 
-      // Avoid copying image message if possible
-      sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
+        // Avoid copying image message if possible
+        sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
 
-      // Convert OpenCV Mat to ROS Image
-      image_msg->header.stamp = stamp;
-      image_msg->header.frame_id = cxt_.camera_frame_id_;
-      image_msg->height = frame.rows;
-      image_msg->width = frame.cols;
-      image_msg->encoding = mat_type2encoding(frame.type());
-      image_msg->is_bigendian = false;
-      image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
-      image_msg->data.assign(frame.datastart, frame.dataend);
+        // Convert OpenCV Mat to ROS Image
+        image_msg->header.stamp = stamp;
+        image_msg->header.frame_id = cxt_.camera_frame_id_;
+        image_msg->height = frame.rows;
+        image_msg->width = frame.cols;
+        image_msg->encoding = mat_type2encoding(frame.type());
+        image_msg->is_bigendian = false;
+        image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
+        image_msg->data.assign(frame.datastart, frame.dataend);
 
 #undef SHOW_ADDRESS
 #ifdef SHOW_ADDRESS
-      static int count = 0;
-      RCLCPP_INFO(get_logger(), "%d, %p", count++, reinterpret_cast<std::uintptr_t>(image_msg.get()));
+        static int count = 0;
+        RCLCPP_INFO(get_logger(), "%d, %p", count++, reinterpret_cast<std::uintptr_t>(image_msg.get()));
 #endif
 
-      // Publish
-      image_pub_->publish(std::move(image_msg));
-      if (camera_info_pub_) {
-        camera_info_msg_.header.stamp = stamp;
-        camera_info_pub_->publish(camera_info_msg_);
+        // Publish
+        image_pub_->publish(std::move(image_msg));
+        if (camera_info_pub_) {
+          camera_info_msg_.header.stamp = stamp;
+          camera_info_pub_->publish(camera_info_msg_);
+        }
+
+        // Record frame to video file
+        if (recording_) {
+          video_writer_.write(frame);
+          writeToPoseFile(stamp);
+        }
+
       }
 
-      // Record frame to video file
-      if (recording_) {
-        video_writer_.write(frame);
-      }
-
-    }
+      // Increment frame count after processing
+      frame_count_++;
 
       // Sleep if required
       if (cxt_.file_) {
@@ -420,6 +435,11 @@ namespace opencv_cam
     }
 
     recording_ = true;
+
+    // Open the pose file
+    std::string pose_filename = filename.substr(0, filename.find_last_of(".")) + "_pose.txt";
+    pose_file_.open(pose_filename);
+
     return true;
   }
 
@@ -427,10 +447,45 @@ namespace opencv_cam
     if (recording_)
     {
       video_writer_.release();
+      if (pose_file_.is_open())
+        pose_file_.close();
       recording_ = false;
+      frame_count_ = 0;
       RCLCPP_INFO(this->get_logger(), "Stopped recording.");
     }
     return true;
+  }
+
+  void OpencvCamNode::writeToPoseFile(rclcpp::Time stamp) {
+    // Get the current camera pose from the TF tree
+    geometry_msgs::msg::TransformStamped transform_stamped;
+    try
+    {
+      transform_stamped = tf_buffer_->lookupTransform(map_frame_, cxt_.camera_frame_id_, stamp, rclcpp::Duration::from_seconds(0.1));
+    }
+    catch (tf2::TransformException &ex)
+    {
+      RCLCPP_ERROR(this->get_logger(), "Could not transform: %s", ex.what());
+      return;
+    }
+
+    // TODO make this a service arg
+    int camera_id = 1;
+    std::string image_name = "image_" + std::to_string(frame_count_) + ".png";
+    // Write the pose to the pose file
+    if (pose_file_.is_open())
+    {
+      pose_file_  << frame_count_ << " ";
+      pose_file_  << transform_stamped.transform.rotation.w << " " 
+                  << transform_stamped.transform.rotation.x << " "
+                  << transform_stamped.transform.rotation.y << " " 
+                  << transform_stamped.transform.rotation.z << " ";
+      pose_file_  << transform_stamped.transform.translation.x << " " 
+                  << transform_stamped.transform.translation.y << " " 
+                  << transform_stamped.transform.translation.z << " ";
+      pose_file_  << std::to_string(camera_id) << " " << image_name << "\n";
+      pose_file_  << "\n"; // Leave blank line between frames
+    }
   }
 
 } // namespace opencv_cam
