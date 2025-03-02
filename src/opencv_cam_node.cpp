@@ -139,6 +139,8 @@ namespace opencv_cam
       image_ir_pub_ = create_publisher<sensor_msgs::msg::Image>("image_ir_raw", 10);
     }
 
+    std::cout << "Creating video service" << std::endl;
+
     // Video recorder service
     record_service_ = this->create_service<messages_88::srv::RecordVideo>("~/record", std::bind(&OpencvCamNode::recordVideoCallback, this, std::placeholders::_1, std::placeholders::_2));
 
@@ -296,7 +298,7 @@ namespace opencv_cam
             image_pub_->publish(std::move(image_msg));
 
             if (recording_) {
-              video_writer_.write(RGBImageCU83);
+              video_writer_.write(ResultImage);
               writeToPoseFile(stamp);
               pose_written = true;
             }
@@ -403,10 +405,18 @@ namespace opencv_cam
         return false;
     }
 
+    // If see3cam, split into two 1920 width images.
+    int width;
+    if (see3cam_flag_) {
+      width = 1920;
+    } else {
+      width = cxt_.width_;
+    }
+
     video_writer_.open(filename, 
                         cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
                         (double)cxt_.fps_, 
-                        cv::Size(cxt_.width_, cxt_.height_));
+                        cv::Size(width, cxt_.height_));
 
     if (!video_writer_.isOpened())
     {
@@ -417,12 +427,14 @@ namespace opencv_cam
       RCLCPP_INFO(this->get_logger(), "Started recording to %s", filename.c_str());
     }
 
+    // If see3cam_flag_ set, open a second video writer for the IR image
     if (see3cam_flag_) {
       std::string filename_ir = filename.substr(0, filename.find_last_of(".")) + "_ir.mp4";
+
       video_writer_ir_.open(filename_ir, 
         cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
         (double)cxt_.fps_, 
-        cv::Size(cxt_.width_, cxt_.height_));
+        cv::Size(width, cxt_.height_), false);
 
       if (!video_writer_ir_.isOpened())
       {
@@ -447,6 +459,7 @@ namespace opencv_cam
     if (recording_)
     {
       video_writer_.release();
+      video_writer_ir_.release();
       if (pose_file_.is_open())
         pose_file_.close();
       recording_ = false;
@@ -461,7 +474,7 @@ namespace opencv_cam
     geometry_msgs::msg::TransformStamped transform_stamped;
     try
     {
-      transform_stamped = tf_buffer_->lookupTransform(map_frame_, cxt_.camera_frame_id_, stamp, rclcpp::Duration::from_seconds(0.1));
+      transform_stamped = tf_buffer_->lookupTransform(map_frame_, cxt_.camera_frame_id_, stamp, rclcpp::Duration::from_seconds(0.5));
     }
     catch (tf2::TransformException &ex)
     {
