@@ -46,6 +46,10 @@ namespace opencv_cam
     std::ofstream pose_file_;
     int frame_count_;
 
+    double target_frame_time_;
+    rclcpp::Time last_frame_time_;
+    bool first_frame_received_;
+
     bool recording_;
 
     std::mutex record_mutex_;
