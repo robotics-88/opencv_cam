@@ -117,7 +117,6 @@ namespace opencv_cam
 
       if (cxt_.fps_ > 0) {
         capture_->set(cv::CAP_PROP_FPS, cxt_.fps_);
-        target_frame_time_ = 1.0 / (double)cxt_.fps_;
       }
       else {
         RCLCPP_ERROR(get_logger(), "fps not set, not starting node");
@@ -126,9 +125,12 @@ namespace opencv_cam
 
       double width = capture_->get(cv::CAP_PROP_FRAME_WIDTH);
       double height = capture_->get(cv::CAP_PROP_FRAME_HEIGHT);
-      double fps = capture_->get(cv::CAP_PROP_FPS);
+      device_fps_ = capture_->get(cv::CAP_PROP_FPS);
+
+      target_frame_time_ = 1.0 / device_fps_;
+
       RCLCPP_INFO(get_logger(), "device %d open, width %g, height %g, device fps %g",
-                  cxt_.index_, width, height, fps);
+                  cxt_.index_, width, height, device_fps_);
     }
 
     assert(!cxt_.camera_info_path_.empty()); // readCalibration will crash if file_name is ""
@@ -147,7 +149,6 @@ namespace opencv_cam
       image_ir_pub_ = create_publisher<sensor_msgs::msg::Image>("image_ir_raw", 10);
     }
 
-    meas_frame_pub_
 
     std::cout << "Creating video service" << std::endl;
 
@@ -157,7 +158,17 @@ namespace opencv_cam
     // Run loop on it's own thread
     thread_ = std::thread(std::bind(&OpencvCamNode::loop, this));
 
-    RCLCPP_INFO(get_logger(), "start publishing");
+    RCLCPP_INFO(get_logger(), "Start publishing");
+
+    meas_fps_pub_ = create_publisher<std_msgs::msg::Float32>("meas_fps", 10);
+
+    // Publish how many frames received in last second
+    meas_fps_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() {
+      std_msgs::msg::Float32 msg;
+      msg.data = frame_count_ - last_frame_count_;
+      meas_fps_pub_->publish(msg);
+      last_frame_count_ = frame_count_;
+    });
   }
 
   OpencvCamNode::~OpencvCamNode()
@@ -326,30 +337,9 @@ namespace opencv_cam
 
           // Record frame to video file
           if (recording_ && video_writer_.isOpened() && video_writer_ir_.isOpened()) {
-
-            rclcpp::Time current_time = this->get_clock()->now();
-
-            // Set the initial frame time and write on the first recorded image
-            if (!first_frame_received_) {
-              // Set the initial frame time on the first image
-              last_frame_time_ = current_time;
-              first_frame_received_ = true;
-              frame_count_ = 0;
-              video_writer_.write(ResultImage);
-              video_writer_ir_.write(IRImageCU83);
-            }
-            
-            double elapsed_time = (current_time - last_frame_time_).seconds();
-
-            while (elapsed_time >= target_frame_time_) {
-              // TODO: handle error case if either ResultImage or IRImageCU83 is empty
-              video_writer_.write(ResultImage);
-              video_writer_ir_.write(IRImageCU83);
-              // writeToPoseFile(stamp);
-              elapsed_time -= target_frame_time_;
-            }
-
-            last_frame_time_ = current_time;          
+            video_writer_.write(ResultImage);
+            video_writer_ir_.write(IRImageCU83);
+            writeToPoseFile(stamp);
           }
         }
         else
@@ -387,28 +377,8 @@ namespace opencv_cam
 
         // Record frame to video file
         if (recording_ && video_writer_.isOpened()) {
-
-          rclcpp::Time current_time = this->get_clock()->now();
-
-          // Set the initial frame time and write on the first recorded image
-          if (!first_frame_received_) {
-            // Set the initial frame time on the first image
-            last_frame_time_ = current_time;
-            first_frame_received_ = true;
-            frame_count_ = 0;
-            video_writer_.write(frame);
-          }
-          
-          double elapsed_time = (current_time - last_frame_time_).seconds();
-
-          while (elapsed_time >= target_frame_time_) {
-            // TODO: handle error case if either ResultImage or IRImageCU83 is empty
-            video_writer_.write(frame);
-            // writeToPoseFile(stamp);
-            elapsed_time -= target_frame_time_;
-          }
-
-          last_frame_time_ = current_time;          
+          video_writer_.write(frame);
+          writeToPoseFile(stamp);
         }
 
       }
@@ -460,7 +430,7 @@ namespace opencv_cam
 
     video_writer_.open(filename, 
                         cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
-                        (double)cxt_.fps_, 
+                        device_fps_, 
                         cv::Size(width, cxt_.height_));
 
     if (!video_writer_.isOpened())
@@ -478,7 +448,7 @@ namespace opencv_cam
 
       video_writer_ir_.open(filename_ir, 
         cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
-        (double)cxt_.fps_, 
+        device_fps_, 
         cv::Size(width, cxt_.height_), false);
 
       if (!video_writer_ir_.isOpened())

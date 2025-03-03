@@ -29,7 +29,7 @@ namespace opencv_cam
     sensor_msgs::msg::CameraInfo camera_info_msg_;
 
     int publish_fps_;
-    double meas_fps_;
+    double device_fps_;
     rclcpp::Time next_stamp_;
     bool see3cam_flag_;
 
@@ -38,6 +38,8 @@ namespace opencv_cam
     rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr meas_fps_pub_;
     rclcpp::Service<messages_88::srv::RecordVideo>::SharedPtr record_service_;
+
+    rclcpp::TimerBase::SharedPtr meas_fps_timer_;
 
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -48,6 +50,7 @@ namespace opencv_cam
     std::string map_frame_;
     std::ofstream pose_file_;
     std::atomic<int> frame_count_;
+    int last_frame_count_;
 
     double target_frame_time_;
     rclcpp::Time last_frame_time_;
@@ -72,6 +75,7 @@ namespace opencv_cam
     void validate_parameters();
     bool SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat* IRImageCU83, cv::Mat* RGBImageCU83, int *RGBBufferSizeCU83, int *IRBufferSizeCU83);
 
+    void fpsTimerCallback();
     bool recordVideoCallback(const std::shared_ptr<messages_88::srv::RecordVideo::Request> req,
       std::shared_ptr<messages_88::srv::RecordVideo::Response> resp);
 
