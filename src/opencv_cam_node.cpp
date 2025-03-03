@@ -297,7 +297,7 @@ namespace opencv_cam
         cv::Mat IRImageCU83 = cv::Mat(1080, 1920, CV_8UC1);
         int RGBBufferSizeCU83, IRBufferSizeCU83 = 0;
         cv::Mat ResultImage;
-        if (SeparatingRGBIRBuffers(frame, &IRImageCU83, &RGBImageCU83, &RGBBufferSizeCU83, &IRBufferSizeCU83) == 1)
+        if (SeparatingRGBIRBuffers(frame, &IRImageCU83, &RGBImageCU83, &RGBBufferSizeCU83, &IRBufferSizeCU83))
         {
           bool pose_written = false;
           if (!RGBImageCU83.empty())
@@ -337,7 +337,7 @@ namespace opencv_cam
 
           // Record frame to video file
           if (recording_ && video_writer_.isOpened() && video_writer_ir_.isOpened()) {
-            rclcpp::Time current_time = this->get_clock()->now();
+            /* rclcpp::Time current_time = this->get_clock()->now();
 
             // Set the initial frame time and write on the first recorded image
             if (!first_frame_received_) {
@@ -359,7 +359,12 @@ namespace opencv_cam
               elapsed_time -= target_frame_time_;
             }
 
-            last_frame_time_ = current_time;  
+            last_frame_time_ = current_time;  */
+            auto prev = now();
+            video_writer_.write(ResultImage);
+            auto next = now();
+            auto time = (next - prev).seconds();
+            // video_writer_ir_.write(IRImageCU83);
           }
         }
         else
@@ -425,6 +430,11 @@ namespace opencv_cam
       // Increment frame count after processing
       frame_count_++;
 
+
+      auto end_time = now();
+
+      auto time_diff = (end_time - stamp).seconds();
+
       // Sleep if required
       if (cxt_.file_) {
         using namespace std::chrono_literals;
@@ -468,7 +478,7 @@ namespace opencv_cam
     }
 
     video_writer_.open(filename, 
-                        cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
+                        cv::VideoWriter::fourcc('H', '2', '6', '4'), 
                         device_fps_, 
                         cv::Size(width, cxt_.height_));
 
@@ -486,7 +496,7 @@ namespace opencv_cam
       std::string filename_ir = filename.substr(0, filename.find_last_of(".")) + "_ir.mp4";
 
       video_writer_ir_.open(filename_ir, 
-        cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
+        cv::VideoWriter::fourcc('H', '2', '6', '4'),
         device_fps_, 
         cv::Size(width, cxt_.height_), false);
 
