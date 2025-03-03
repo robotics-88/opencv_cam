@@ -147,6 +147,8 @@ namespace opencv_cam
       image_ir_pub_ = create_publisher<sensor_msgs::msg::Image>("image_ir_raw", 10);
     }
 
+    meas_frame_pub_
+
     std::cout << "Creating video service" << std::endl;
 
     // Video recorder service
@@ -332,6 +334,7 @@ namespace opencv_cam
               // Set the initial frame time on the first image
               last_frame_time_ = current_time;
               first_frame_received_ = true;
+              frame_count_ = 0;
               video_writer_.write(ResultImage);
               video_writer_ir_.write(IRImageCU83);
             }
@@ -342,7 +345,7 @@ namespace opencv_cam
               // TODO: handle error case if either ResultImage or IRImageCU83 is empty
               video_writer_.write(ResultImage);
               video_writer_ir_.write(IRImageCU83);
-              writeToPoseFile(stamp);
+              // writeToPoseFile(stamp);
               elapsed_time -= target_frame_time_;
             }
 
@@ -392,6 +395,7 @@ namespace opencv_cam
             // Set the initial frame time on the first image
             last_frame_time_ = current_time;
             first_frame_received_ = true;
+            frame_count_ = 0;
             video_writer_.write(frame);
           }
           
@@ -400,7 +404,7 @@ namespace opencv_cam
           while (elapsed_time >= target_frame_time_) {
             // TODO: handle error case if either ResultImage or IRImageCU83 is empty
             video_writer_.write(frame);
-            writeToPoseFile(stamp);
+            // writeToPoseFile(stamp);
             elapsed_time -= target_frame_time_;
           }
 
