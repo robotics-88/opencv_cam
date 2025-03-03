@@ -337,9 +337,29 @@ namespace opencv_cam
 
           // Record frame to video file
           if (recording_ && video_writer_.isOpened() && video_writer_ir_.isOpened()) {
-            video_writer_.write(ResultImage);
-            video_writer_ir_.write(IRImageCU83);
-            writeToPoseFile(stamp);
+            rclcpp::Time current_time = this->get_clock()->now();
+
+            // Set the initial frame time and write on the first recorded image
+            if (!first_frame_received_) {
+              // Set the initial frame time on the first image
+              last_frame_time_ = current_time;
+              first_frame_received_ = true;
+              frame_count_ = 0;
+              video_writer_.write(ResultImage);
+              video_writer_ir_.write(IRImageCU83);
+            }
+
+            double elapsed_time = (current_time - last_frame_time_).seconds();
+
+            while (elapsed_time >= target_frame_time_) {
+              // TODO: handle error case if either ResultImage or IRImageCU83 is empty
+              video_writer_.write(ResultImage);
+              video_writer_ir_.write(IRImageCU83);
+              // writeToPoseFile(stamp);
+              elapsed_time -= target_frame_time_;
+            }
+
+            last_frame_time_ = current_time;  
           }
         }
         else
@@ -377,8 +397,27 @@ namespace opencv_cam
 
         // Record frame to video file
         if (recording_ && video_writer_.isOpened()) {
-          video_writer_.write(frame);
-          writeToPoseFile(stamp);
+          rclcpp::Time current_time = this->get_clock()->now();
+
+          // Set the initial frame time and write on the first recorded image
+          if (!first_frame_received_) {
+            // Set the initial frame time on the first image
+            last_frame_time_ = current_time;
+            first_frame_received_ = true;
+            frame_count_ = 0;
+            video_writer_.write(frame);
+          }
+          
+          double elapsed_time = (current_time - last_frame_time_).seconds();
+
+          while (elapsed_time >= target_frame_time_) {
+            // TODO: handle error case if either ResultImage or IRImageCU83 is empty
+            video_writer_.write(frame);
+            // writeToPoseFile(stamp);
+            elapsed_time -= target_frame_time_;
+          }
+
+          last_frame_time_ = current_time;          
         }
 
       }
