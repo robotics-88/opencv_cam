@@ -145,9 +145,6 @@ namespace opencv_cam
       image_ir_pub_ = create_publisher<sensor_msgs::msg::Image>("image_ir_raw", 10);
     }
 
-
-    std::cout << "Creating video service" << std::endl;
-
     // Video recorder service
     record_service_ = this->create_service<messages_88::srv::RecordVideo>("~/record", std::bind(&OpencvCamNode::recordVideoCallback, this, std::placeholders::_1, std::placeholders::_2));
 
