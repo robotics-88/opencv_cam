@@ -336,35 +336,16 @@ namespace opencv_cam
           }
 
           // Record frame to video file
-          if (recording_ && video_writer_.isOpened() && video_writer_ir_.isOpened()) {
-            /* rclcpp::Time current_time = this->get_clock()->now();
+          if (recording_) {
 
-            // Set the initial frame time and write on the first recorded image
-            if (!first_frame_received_) {
-              // Set the initial frame time on the first image
-              last_frame_time_ = current_time;
-              first_frame_received_ = true;
-              frame_count_ = 0;
+            // TODO: determine why see3cam write takes so long and therefore causes delays.
+            if (video_writer_.isOpened()) {
               video_writer_.write(ResultImage);
+            }
+            if (video_writer_ir_.isOpened()) {
               video_writer_ir_.write(IRImageCU83);
             }
-
-            double elapsed_time = (current_time - last_frame_time_).seconds();
-
-            while (elapsed_time >= target_frame_time_) {
-              // TODO: handle error case if either ResultImage or IRImageCU83 is empty
-              video_writer_.write(ResultImage);
-              video_writer_ir_.write(IRImageCU83);
-              // writeToPoseFile(stamp);
-              elapsed_time -= target_frame_time_;
-            }
-
-            last_frame_time_ = current_time;  */
-            auto prev = now();
-            video_writer_.write(ResultImage);
-            auto next = now();
-            auto time = (next - prev).seconds();
-            // video_writer_ir_.write(IRImageCU83);
+            writeToPoseFile(stamp);
           }
         }
         else
@@ -402,38 +383,14 @@ namespace opencv_cam
 
         // Record frame to video file
         if (recording_ && video_writer_.isOpened()) {
-          rclcpp::Time current_time = this->get_clock()->now();
-
-          // Set the initial frame time and write on the first recorded image
-          if (!first_frame_received_) {
-            // Set the initial frame time on the first image
-            last_frame_time_ = current_time;
-            first_frame_received_ = true;
-            frame_count_ = 0;
-            video_writer_.write(frame);
-          }
-          
-          double elapsed_time = (current_time - last_frame_time_).seconds();
-
-          while (elapsed_time >= target_frame_time_) {
-            // TODO: handle error case if either ResultImage or IRImageCU83 is empty
-            video_writer_.write(frame);
-            // writeToPoseFile(stamp);
-            elapsed_time -= target_frame_time_;
-          }
-
-          last_frame_time_ = current_time;          
+          video_writer_.write(frame);
+          writeToPoseFile(stamp);        
         }
 
       }
 
       // Increment frame count after processing
       frame_count_++;
-
-
-      auto end_time = now();
-
-      auto time_diff = (end_time - stamp).seconds();
 
       // Sleep if required
       if (cxt_.file_) {
