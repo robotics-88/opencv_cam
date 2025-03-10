@@ -52,10 +52,6 @@ namespace opencv_cam
     std::atomic<int> frame_count_;
     int last_frame_count_;
 
-    double target_frame_time_;
-    rclcpp::Time last_frame_time_;
-    bool first_frame_received_;
-
     bool recording_;
 
     std::mutex record_mutex_;
@@ -68,7 +64,7 @@ namespace opencv_cam
 
     bool startRecording(const std::string &filename);
     bool stopRecording();
-    void writeToPoseFile(rclcpp::Time stamp);
+    void writeToPoseFile();
 
   private:
 

@@ -33,8 +33,6 @@ namespace opencv_cam
     , recording_(false)
     , frame_count_(0)
     , canceled_(false)
-    , first_frame_received_(false)
-    , last_frame_time_(0, 0, RCL_ROS_TIME)
   {
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
@@ -126,8 +124,6 @@ namespace opencv_cam
       double width = capture_->get(cv::CAP_PROP_FRAME_WIDTH);
       double height = capture_->get(cv::CAP_PROP_FRAME_HEIGHT);
       device_fps_ = capture_->get(cv::CAP_PROP_FPS);
-
-      target_frame_time_ = 1.0 / device_fps_;
 
       RCLCPP_INFO(get_logger(), "device %d open, width %g, height %g, device fps %g",
                   cxt_.index_, width, height, device_fps_);
@@ -345,7 +341,7 @@ namespace opencv_cam
             if (video_writer_ir_.isOpened()) {
               video_writer_ir_.write(IRImageCU83);
             }
-            writeToPoseFile(stamp);
+            writeToPoseFile();
           }
         }
         else
@@ -384,7 +380,7 @@ namespace opencv_cam
         // Record frame to video file
         if (recording_ && video_writer_.isOpened()) {
           video_writer_.write(frame);
-          writeToPoseFile(stamp);        
+          writeToPoseFile();
         }
 
       }
@@ -479,24 +475,30 @@ namespace opencv_cam
   bool OpencvCamNode::stopRecording() {
     if (recording_)
     {
-      video_writer_.release();
-      video_writer_ir_.release();
+      if (video_writer_.isOpened())
+        video_writer_.release();
+      if (video_writer_ir_.isOpened())
+        video_writer_ir_.release();
       if (pose_file_.is_open())
         pose_file_.close();
       recording_ = false;
       frame_count_ = 0;
       RCLCPP_INFO(this->get_logger(), "Stopped recording.");
     }
-    first_frame_received_ = false;
     return true;
   }
 
-  void OpencvCamNode::writeToPoseFile(rclcpp::Time stamp) {
+  void OpencvCamNode::writeToPoseFile() {
     // Get the current camera pose from the TF tree
     geometry_msgs::msg::TransformStamped transform_stamped;
     try
     {
-      transform_stamped = tf_buffer_->lookupTransform(map_frame_, cxt_.camera_frame_id_, stamp, rclcpp::Duration::from_seconds(0.5));
+      transform_stamped = tf_buffer_->lookupTransform(map_frame_, cxt_.camera_frame_id_, tf2::TimePointZero);
+      rclcpp::Time transform_time(transform_stamped.header.stamp);
+      if (now() - transform_time > rclcpp::Duration::from_seconds(0.5))
+      {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Camera TF is older than 0.5 seconds");
+      }
     }
     catch (tf2::TransformException &ex)
     {
