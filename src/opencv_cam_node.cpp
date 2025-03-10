@@ -292,7 +292,6 @@ namespace opencv_cam
         cv::Mat ResultImage;
         if (SeparatingRGBIRBuffers(frame, &IRImageCU83, &RGBImageCU83, &RGBBufferSizeCU83, &IRBufferSizeCU83))
         {
-          bool pose_written = false;
           if (!RGBImageCU83.empty())
           {
             cvtColor(RGBImageCU83, ResultImage, cv::COLOR_YUV2BGR_UYVY);
