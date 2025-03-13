@@ -28,9 +28,15 @@ namespace opencv_cam
   }
 
   OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options) :
-    Node("opencv_cam", options),
-    canceled_(false)
+    Node("opencv_cam", options)
+    , map_frame_("map")
+    , recording_(false)
+    , frame_count_(0)
+    , canceled_(false)
   {
+    tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
+    tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
+
     RCLCPP_INFO(get_logger(), "use_intra_process_comms=%d", options.use_intra_process_comms());
 
     // Initialize parameters
@@ -78,6 +84,7 @@ namespace opencv_cam
         // Publish at the recorded rate
         publish_fps_ = static_cast<int>(capture_->get(cv::CAP_PROP_FPS));
       }
+      
 
       double width = capture_->get(cv::CAP_PROP_FRAME_WIDTH);
       double height = capture_->get(cv::CAP_PROP_FRAME_HEIGHT);
@@ -109,12 +116,17 @@ namespace opencv_cam
       if (cxt_.fps_ > 0) {
         capture_->set(cv::CAP_PROP_FPS, cxt_.fps_);
       }
+      else {
+        RCLCPP_ERROR(get_logger(), "fps not set, not starting node");
+        return;
+      }
 
       double width = capture_->get(cv::CAP_PROP_FRAME_WIDTH);
       double height = capture_->get(cv::CAP_PROP_FRAME_HEIGHT);
-      double fps = capture_->get(cv::CAP_PROP_FPS);
+      device_fps_ = capture_->get(cv::CAP_PROP_FPS);
+
       RCLCPP_INFO(get_logger(), "device %d open, width %g, height %g, device fps %g",
-                  cxt_.index_, width, height, fps);
+                  cxt_.index_, width, height, device_fps_);
     }
 
     assert(!cxt_.camera_info_path_.empty()); // readCalibration will crash if file_name is ""
@@ -139,7 +151,17 @@ namespace opencv_cam
     // Run loop on it's own thread
     thread_ = std::thread(std::bind(&OpencvCamNode::loop, this));
 
-    RCLCPP_INFO(get_logger(), "start publishing");
+    RCLCPP_INFO(get_logger(), "Start publishing");
+
+    meas_fps_pub_ = create_publisher<std_msgs::msg::Float32>("meas_fps", 10);
+
+    // Publish how many frames received in last second
+    meas_fps_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() {
+      std_msgs::msg::Float32 msg;
+      msg.data = frame_count_ - last_frame_count_;
+      meas_fps_pub_->publish(msg);
+      last_frame_count_ = frame_count_;
+    });
   }
 
   OpencvCamNode::~OpencvCamNode()
@@ -268,7 +290,7 @@ namespace opencv_cam
         cv::Mat IRImageCU83 = cv::Mat(1080, 1920, CV_8UC1);
         int RGBBufferSizeCU83, IRBufferSizeCU83 = 0;
         cv::Mat ResultImage;
-        if (SeparatingRGBIRBuffers(frame, &IRImageCU83, &RGBImageCU83, &RGBBufferSizeCU83, &IRBufferSizeCU83) == 1)
+        if (SeparatingRGBIRBuffers(frame, &IRImageCU83, &RGBImageCU83, &RGBBufferSizeCU83, &IRBufferSizeCU83))
         {
           if (!RGBImageCU83.empty())
           {
@@ -287,11 +309,6 @@ namespace opencv_cam
             image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(ResultImage.step);
             image_msg->data.assign(ResultImage.datastart, ResultImage.dataend);
             image_pub_->publish(std::move(image_msg));
-
-            if (recording_) {
-              video_writer_.write(RGBImageCU83);
-            }
-            
           }
           if (!IRImageCU83.empty())
           {
@@ -308,10 +325,19 @@ namespace opencv_cam
             image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(IRImageCU83.step);
             image_msg->data.assign(IRImageCU83.datastart, IRImageCU83.dataend);
             image_ir_pub_->publish(std::move(image_msg));
+          }
 
-            if (recording_) {
+          // Record frame to video file
+          if (recording_) {
+
+            // TODO: determine why see3cam write takes so long and therefore causes delays.
+            if (video_writer_.isOpened()) {
+              video_writer_.write(ResultImage);
+            }
+            if (video_writer_ir_.isOpened()) {
               video_writer_ir_.write(IRImageCU83);
             }
+            writeToPoseFile();
           }
         }
         else
@@ -321,38 +347,42 @@ namespace opencv_cam
       }
       else {
 
-      // Avoid copying image message if possible
-      sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
+        // Avoid copying image message if possible
+        sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
 
-      // Convert OpenCV Mat to ROS Image
-      image_msg->header.stamp = stamp;
-      image_msg->header.frame_id = cxt_.camera_frame_id_;
-      image_msg->height = frame.rows;
-      image_msg->width = frame.cols;
-      image_msg->encoding = mat_type2encoding(frame.type());
-      image_msg->is_bigendian = false;
-      image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
-      image_msg->data.assign(frame.datastart, frame.dataend);
+        // Convert OpenCV Mat to ROS Image
+        image_msg->header.stamp = stamp;
+        image_msg->header.frame_id = cxt_.camera_frame_id_;
+        image_msg->height = frame.rows;
+        image_msg->width = frame.cols;
+        image_msg->encoding = mat_type2encoding(frame.type());
+        image_msg->is_bigendian = false;
+        image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
+        image_msg->data.assign(frame.datastart, frame.dataend);
 
 #undef SHOW_ADDRESS
 #ifdef SHOW_ADDRESS
-      static int count = 0;
-      RCLCPP_INFO(get_logger(), "%d, %p", count++, reinterpret_cast<std::uintptr_t>(image_msg.get()));
+        static int count = 0;
+        RCLCPP_INFO(get_logger(), "%d, %p", count++, reinterpret_cast<std::uintptr_t>(image_msg.get()));
 #endif
 
-      // Publish
-      image_pub_->publish(std::move(image_msg));
-      if (camera_info_pub_) {
-        camera_info_msg_.header.stamp = stamp;
-        camera_info_pub_->publish(camera_info_msg_);
+        // Publish
+        image_pub_->publish(std::move(image_msg));
+        if (camera_info_pub_) {
+          camera_info_msg_.header.stamp = stamp;
+          camera_info_pub_->publish(camera_info_msg_);
+        }
+
+        // Record frame to video file
+        if (recording_ && video_writer_.isOpened()) {
+          video_writer_.write(frame);
+          writeToPoseFile();
+        }
+
       }
 
-      // Record frame to video file
-      if (recording_) {
-        video_writer_.write(frame);
-      }
-
-    }
+      // Increment frame count after processing
+      frame_count_++;
 
       // Sleep if required
       if (cxt_.file_) {
@@ -388,10 +418,18 @@ namespace opencv_cam
         return false;
     }
 
+    // If see3cam, split into two 1920 width images.
+    int width;
+    if (see3cam_flag_) {
+      width = 1920;
+    } else {
+      width = cxt_.width_;
+    }
+
     video_writer_.open(filename, 
-                        cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
-                        (double)cxt_.fps_, 
-                        cv::Size(cxt_.width_, cxt_.height_));
+                        cv::VideoWriter::fourcc('H', '2', '6', '4'), 
+                        device_fps_, 
+                        cv::Size(width, cxt_.height_));
 
     if (!video_writer_.isOpened())
     {
@@ -402,12 +440,14 @@ namespace opencv_cam
       RCLCPP_INFO(this->get_logger(), "Started recording to %s", filename.c_str());
     }
 
+    // If see3cam_flag_ set, open a second video writer for the IR image
     if (see3cam_flag_) {
       std::string filename_ir = filename.substr(0, filename.find_last_of(".")) + "_ir.mp4";
+
       video_writer_ir_.open(filename_ir, 
-        cv::VideoWriter::fourcc('m', 'p', '4', 'v'), 
-        (double)cxt_.fps_, 
-        cv::Size(cxt_.width_, cxt_.height_));
+        cv::VideoWriter::fourcc('H', '2', '6', '4'),
+        device_fps_, 
+        cv::Size(width, cxt_.height_), false);
 
       if (!video_writer_ir_.isOpened())
       {
@@ -420,17 +460,65 @@ namespace opencv_cam
     }
 
     recording_ = true;
+
+    // Open the pose file
+    std::string pose_filename = filename.substr(0, filename.find_last_of(".")) + "_pose.txt";
+    pose_file_.open(pose_filename);
+
     return true;
   }
 
   bool OpencvCamNode::stopRecording() {
     if (recording_)
     {
-      video_writer_.release();
+      if (video_writer_.isOpened())
+        video_writer_.release();
+      if (video_writer_ir_.isOpened())
+        video_writer_ir_.release();
+      if (pose_file_.is_open())
+        pose_file_.close();
       recording_ = false;
+      frame_count_ = 0;
       RCLCPP_INFO(this->get_logger(), "Stopped recording.");
     }
     return true;
+  }
+
+  void OpencvCamNode::writeToPoseFile() {
+    // Get the current camera pose from the TF tree
+    geometry_msgs::msg::TransformStamped transform_stamped;
+    try
+    {
+      transform_stamped = tf_buffer_->lookupTransform(map_frame_, cxt_.camera_frame_id_, tf2::TimePointZero);
+      rclcpp::Time transform_time(transform_stamped.header.stamp);
+      if (now() - transform_time > rclcpp::Duration::from_seconds(0.5))
+      {
+        RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Camera TF is older than 0.5 seconds");
+      }
+    }
+    catch (tf2::TransformException &ex)
+    {
+      RCLCPP_ERROR(this->get_logger(), "Could not transform: %s", ex.what());
+      return;
+    }
+
+    // TODO make this a service arg
+    int camera_id = 1;
+    std::string image_name = "image_" + std::to_string(frame_count_) + ".png";
+    // Write the pose to the pose file
+    if (pose_file_.is_open())
+    {
+      pose_file_  << frame_count_ << " ";
+      pose_file_  << transform_stamped.transform.rotation.w << " " 
+                  << transform_stamped.transform.rotation.x << " "
+                  << transform_stamped.transform.rotation.y << " " 
+                  << transform_stamped.transform.rotation.z << " ";
+      pose_file_  << transform_stamped.transform.translation.x << " " 
+                  << transform_stamped.transform.translation.y << " " 
+                  << transform_stamped.transform.translation.z << " ";
+      pose_file_  << std::to_string(camera_id) << " " << image_name << "\n";
+      pose_file_  << "\n"; // Leave blank line between frames
+    }
   }
 
 } // namespace opencv_cam
