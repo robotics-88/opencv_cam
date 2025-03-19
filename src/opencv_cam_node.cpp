@@ -308,7 +308,7 @@ namespace opencv_cam
     }
   }
 
-  void OpencvCamNode::handleSee3CamFrame(cv::Mat frame, rclcpp::Time stamp) {
+  void OpencvCamNode::handleSee3CamFrame(cv::Mat &frame, rclcpp::Time stamp) {
     // separate dual image RGB/IR
     cv::Mat RGBImageCU83 = cv::Mat(1080, 1920, CV_8UC2); //allocation
     cv::Mat IRImageCU83 = cv::Mat(1080, 1920, CV_8UC1);
@@ -372,7 +372,7 @@ namespace opencv_cam
     }
   }
 
-  void OpencvCamNode::handleGenericFrame(cv::Mat frame, rclcpp::Time stamp) {
+  void OpencvCamNode::handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp) {
 
     std::lock_guard<std::mutex> lock(frame_mutex_);
     // Avoid copying image message if possible
@@ -509,7 +509,7 @@ namespace opencv_cam
     }
     catch (tf2::TransformException &ex)
     {
-      RCLCPP_ERROR(this->get_logger(), "Could not transform: %s", ex.what());
+      RCLCPP_ERROR_THROTTLE(this->get_logger(), *this->get_clock(), 1000, "Could not transform: %s", ex.what());
       return;
     }
 

@@ -74,8 +74,8 @@ namespace opencv_cam
     void validate_parameters();
     bool SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat* IRImageCU83, cv::Mat* RGBImageCU83, int *RGBBufferSizeCU83, int *IRBufferSizeCU83);
 
-    void handleSee3CamFrame(cv::Mat frame, rclcpp::Time stamp);
-    void handleGenericFrame(cv::Mat frame, rclcpp::Time stamp);
+    void handleSee3CamFrame(cv::Mat &frame, rclcpp::Time stamp);
+    void handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp);
     void writeToPoseFile();
     void writeVideo();
 
