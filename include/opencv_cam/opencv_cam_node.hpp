@@ -40,6 +40,7 @@ namespace opencv_cam
     rclcpp::Service<messages_88::srv::RecordVideo>::SharedPtr record_service_;
 
     rclcpp::TimerBase::SharedPtr meas_fps_timer_;
+    rclcpp::TimerBase::SharedPtr record_timer_;
 
     std::shared_ptr<tf2_ros::Buffer> tf_buffer_;
     std::shared_ptr<tf2_ros::TransformListener> tf_listener_;
@@ -47,14 +48,18 @@ namespace opencv_cam
     cv::VideoWriter video_writer_;
     cv::VideoWriter video_writer_ir_;
 
+    cv::Mat last_frame_;
+    cv::Mat last_ir_frame_;
+
     std::string map_frame_;
     std::ofstream pose_file_;
     std::atomic<int> frame_count_;
+    std::atomic<int> written_frame_count_;
     int last_frame_count_;
 
     bool recording_;
 
-    std::mutex record_mutex_;
+    std::mutex frame_mutex_;
 
   public:
 
@@ -62,19 +67,22 @@ namespace opencv_cam
 
     ~OpencvCamNode() override;
 
-    bool startRecording(const std::string &filename);
     bool stopRecording();
-    void writeToPoseFile();
 
   private:
 
     void validate_parameters();
     bool SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat* IRImageCU83, cv::Mat* RGBImageCU83, int *RGBBufferSizeCU83, int *IRBufferSizeCU83);
 
-    void fpsTimerCallback();
+    void handleSee3CamFrame(cv::Mat frame, rclcpp::Time stamp);
+    void handleGenericFrame(cv::Mat frame, rclcpp::Time stamp);
+    void writeToPoseFile();
+    void writeVideo();
+
     bool recordVideoCallback(const std::shared_ptr<messages_88::srv::RecordVideo::Request> req,
       std::shared_ptr<messages_88::srv::RecordVideo::Response> resp);
-
+    bool startRecording(const std::string &filename);
+    
     void loop();
   };
 

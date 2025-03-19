@@ -32,6 +32,7 @@ namespace opencv_cam
     , map_frame_("map")
     , recording_(false)
     , frame_count_(0)
+    , written_frame_count_(0)
     , canceled_(false)
   {
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
@@ -162,6 +163,9 @@ namespace opencv_cam
       meas_fps_pub_->publish(msg);
       last_frame_count_ = frame_count_;
     });
+
+    record_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / device_fps_), std::bind(&OpencvCamNode::writeVideo, this));
+
   }
 
   OpencvCamNode::~OpencvCamNode()
@@ -282,103 +286,11 @@ namespace opencv_cam
 
       auto stamp = now();
 
-      std::lock_guard<std::mutex> lock(record_mutex_);
-
       if (see3cam_flag_) {
-        // separate dual image RGB/IR
-        cv::Mat RGBImageCU83 = cv::Mat(1080, 1920, CV_8UC2); //allocation
-        cv::Mat IRImageCU83 = cv::Mat(1080, 1920, CV_8UC1);
-        int RGBBufferSizeCU83, IRBufferSizeCU83 = 0;
-        cv::Mat ResultImage;
-        if (SeparatingRGBIRBuffers(frame, &IRImageCU83, &RGBImageCU83, &RGBBufferSizeCU83, &IRBufferSizeCU83))
-        {
-          if (!RGBImageCU83.empty())
-          {
-            cvtColor(RGBImageCU83, ResultImage, cv::COLOR_YUV2BGR_UYVY);
-
-            // Avoid copying image message if possible
-            sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
-
-            // Convert OpenCV Mat to ROS Image
-            image_msg->header.stamp = stamp;
-            image_msg->header.frame_id = cxt_.camera_frame_id_;
-            image_msg->height = ResultImage.rows;
-            image_msg->width = ResultImage.cols;
-            image_msg->encoding = sensor_msgs::image_encodings::BGR8;
-            image_msg->is_bigendian = false;
-            image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(ResultImage.step);
-            image_msg->data.assign(ResultImage.datastart, ResultImage.dataend);
-            image_pub_->publish(std::move(image_msg));
-          }
-          if (!IRImageCU83.empty())
-          {
-            // Avoid copying image message if possible
-            sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
-
-            // Convert OpenCV Mat to ROS Image
-            image_msg->header.stamp = stamp;
-            image_msg->header.frame_id = cxt_.camera_frame_id_;
-            image_msg->height = IRImageCU83.rows;
-            image_msg->width = IRImageCU83.cols;
-            image_msg->encoding = sensor_msgs::image_encodings::MONO8;
-            image_msg->is_bigendian = false;
-            image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(IRImageCU83.step);
-            image_msg->data.assign(IRImageCU83.datastart, IRImageCU83.dataend);
-            image_ir_pub_->publish(std::move(image_msg));
-          }
-
-          // Record frame to video file
-          if (recording_) {
-
-            // TODO: determine why see3cam write takes so long and therefore causes delays.
-            if (video_writer_.isOpened()) {
-              video_writer_.write(ResultImage);
-            }
-            if (video_writer_ir_.isOpened()) {
-              video_writer_ir_.write(IRImageCU83);
-            }
-            writeToPoseFile();
-          }
-        }
-        else
-        {
-          std::cout << "SeparatingRGBIRBuffers failed" << std::endl;
-        }
+        handleSee3CamFrame(frame, stamp);
       }
       else {
-
-        // Avoid copying image message if possible
-        sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
-
-        // Convert OpenCV Mat to ROS Image
-        image_msg->header.stamp = stamp;
-        image_msg->header.frame_id = cxt_.camera_frame_id_;
-        image_msg->height = frame.rows;
-        image_msg->width = frame.cols;
-        image_msg->encoding = mat_type2encoding(frame.type());
-        image_msg->is_bigendian = false;
-        image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
-        image_msg->data.assign(frame.datastart, frame.dataend);
-
-#undef SHOW_ADDRESS
-#ifdef SHOW_ADDRESS
-        static int count = 0;
-        RCLCPP_INFO(get_logger(), "%d, %p", count++, reinterpret_cast<std::uintptr_t>(image_msg.get()));
-#endif
-
-        // Publish
-        image_pub_->publish(std::move(image_msg));
-        if (camera_info_pub_) {
-          camera_info_msg_.header.stamp = stamp;
-          camera_info_pub_->publish(camera_info_msg_);
-        }
-
-        // Record frame to video file
-        if (recording_ && video_writer_.isOpened()) {
-          video_writer_.write(frame);
-          writeToPoseFile();
-        }
-
+        handleGenericFrame(frame, stamp);
       }
 
       // Increment frame count after processing
@@ -396,12 +308,111 @@ namespace opencv_cam
     }
   }
 
+  void OpencvCamNode::handleSee3CamFrame(cv::Mat frame, rclcpp::Time stamp) {
+    // separate dual image RGB/IR
+    cv::Mat RGBImageCU83 = cv::Mat(1080, 1920, CV_8UC2); //allocation
+    cv::Mat IRImageCU83 = cv::Mat(1080, 1920, CV_8UC1);
+    int RGBBufferSizeCU83, IRBufferSizeCU83 = 0;
+    cv::Mat ResultImage;
+    if (SeparatingRGBIRBuffers(frame, &IRImageCU83, &RGBImageCU83, &RGBBufferSizeCU83, &IRBufferSizeCU83))
+    {
+      std::lock_guard<std::mutex> lock(frame_mutex_);
+      if (!RGBImageCU83.empty())
+      {
+        cvtColor(RGBImageCU83, ResultImage, cv::COLOR_YUV2BGR_UYVY);
+
+        // Avoid copying image message if possible
+        sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
+
+        // Convert OpenCV Mat to ROS Image
+        image_msg->header.stamp = stamp;
+        image_msg->header.frame_id = cxt_.camera_frame_id_;
+        image_msg->height = ResultImage.rows;
+        image_msg->width = ResultImage.cols;
+        image_msg->encoding = sensor_msgs::image_encodings::BGR8;
+        image_msg->is_bigendian = false;
+        image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(ResultImage.step);
+        image_msg->data.assign(ResultImage.datastart, ResultImage.dataend);
+        image_pub_->publish(std::move(image_msg));
+
+        if (last_frame_.empty() || last_frame_.size != ResultImage.size || last_frame_.type() != ResultImage.type()) {
+          last_frame_ = ResultImage.clone();
+        }
+        else {
+          ResultImage.copyTo(last_frame_);
+        }
+      }
+      if (!IRImageCU83.empty())
+      {
+        // Avoid copying image message if possible
+        sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
+
+        // Convert OpenCV Mat to ROS Image
+        image_msg->header.stamp = stamp;
+        image_msg->header.frame_id = cxt_.camera_frame_id_;
+        image_msg->height = IRImageCU83.rows;
+        image_msg->width = IRImageCU83.cols;
+        image_msg->encoding = sensor_msgs::image_encodings::MONO8;
+        image_msg->is_bigendian = false;
+        image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(IRImageCU83.step);
+        image_msg->data.assign(IRImageCU83.datastart, IRImageCU83.dataend);
+        image_ir_pub_->publish(std::move(image_msg));
+
+        if (last_ir_frame_.empty() || last_ir_frame_.size != ResultImage.size || last_ir_frame_.type() != ResultImage.type()) {
+          last_ir_frame_ = IRImageCU83.clone();
+        }
+        else {
+          IRImageCU83.copyTo(last_ir_frame_);
+        }
+      }
+    }
+    else
+    {
+      std::cout << "SeparatingRGBIRBuffers failed" << std::endl;
+    }
+  }
+
+  void OpencvCamNode::handleGenericFrame(cv::Mat frame, rclcpp::Time stamp) {
+
+    std::lock_guard<std::mutex> lock(frame_mutex_);
+    // Avoid copying image message if possible
+    sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
+
+    // Convert OpenCV Mat to ROS Image
+    image_msg->header.stamp = stamp;
+    image_msg->header.frame_id = cxt_.camera_frame_id_;
+    image_msg->height = frame.rows;
+    image_msg->width = frame.cols;
+    image_msg->encoding = mat_type2encoding(frame.type());
+    image_msg->is_bigendian = false;
+    image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
+    image_msg->data.assign(frame.datastart, frame.dataend);
+
+#undef SHOW_ADDRESS
+#ifdef SHOW_ADDRESS
+    static int count = 0;
+    RCLCPP_INFO(get_logger(), "%d, %p", count++, reinterpret_cast<std::uintptr_t>(image_msg.get()));
+#endif
+
+    // Publish
+    image_pub_->publish(std::move(image_msg));
+    if (camera_info_pub_) {
+      camera_info_msg_.header.stamp = stamp;
+      camera_info_pub_->publish(camera_info_msg_);
+    }
+
+    if (last_frame_.empty() || last_frame_.size != frame.size || last_frame_.type() != frame.type()) {
+      last_frame_ = frame.clone();
+    }
+    else {
+      frame.copyTo(last_frame_);
+    }
+  }
+
   bool OpencvCamNode::recordVideoCallback(const std::shared_ptr<messages_88::srv::RecordVideo::Request> req,
     std::shared_ptr<messages_88::srv::RecordVideo::Response> resp) {
     bool success;
 
-    // Use lock guard here to ensure thread safety with main loop which operates in its own thread
-    std::lock_guard<std::mutex> lock(record_mutex_);
     if (req->start)
       success = startRecording(req->filename);
     else
@@ -478,7 +489,7 @@ namespace opencv_cam
       if (pose_file_.is_open())
         pose_file_.close();
       recording_ = false;
-      frame_count_ = 0;
+      written_frame_count_ = 0;
       RCLCPP_INFO(this->get_logger(), "Stopped recording.");
     }
     return true;
@@ -504,11 +515,11 @@ namespace opencv_cam
 
     // TODO make this a service arg
     int camera_id = 1;
-    std::string image_name = "image_" + std::to_string(frame_count_) + ".png";
+    std::string image_name = "image_" + std::to_string(written_frame_count_) + ".png";
     // Write the pose to the pose file
     if (pose_file_.is_open())
     {
-      pose_file_  << frame_count_ << " ";
+      pose_file_  << written_frame_count_ << " ";
       pose_file_  << transform_stamped.transform.rotation.w << " " 
                   << transform_stamped.transform.rotation.x << " "
                   << transform_stamped.transform.rotation.y << " " 
@@ -518,6 +529,22 @@ namespace opencv_cam
                   << transform_stamped.transform.translation.z << " ";
       pose_file_  << std::to_string(camera_id) << " " << image_name << "\n";
       pose_file_  << "\n"; // Leave blank line between frames
+    }
+  }
+
+  void OpencvCamNode::writeVideo() {
+    std::lock_guard<std::mutex> lock(frame_mutex_);
+    if (recording_) {
+
+      // TODO: determine why see3cam write takes so long and therefore causes delays.
+      if (video_writer_.isOpened()) {
+        video_writer_.write(last_frame_);
+      }
+      if (video_writer_ir_.isOpened()) {
+        video_writer_ir_.write(last_ir_frame_);
+      }
+      writeToPoseFile();
+      written_frame_count_++;
     }
   }
 
