@@ -95,7 +95,8 @@ namespace opencv_cam
       next_stamp_ = now();
 
     } else {
-      capture_ = std::make_shared<cv::VideoCapture>(cxt_.device_, cv::CAP_V4L2);
+      std::string pipeline = "v4l2src device=" + cxt_.device_ + " ! image/jpeg, width=" + std::to_string(cxt_.width_) + ", height=" + std::to_string(cxt_.height_) + ", framerate=" + std::to_string(cxt_.fps_) + "/1 ! jpegdec ! videoconvert ! appsink";
+      capture_ = std::make_shared<cv::VideoCapture>(pipeline, cv::CAP_GSTREAMER);
       if (see3cam_flag_) {
         capture_->set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y','1','6',' '));
         capture_->set(cv::CAP_PROP_CONVERT_RGB, false);
