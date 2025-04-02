@@ -10,6 +10,60 @@
 
 namespace opencv_cam
 {
+  // Utility function to check hardware and return preferred GStreamer encoder pipeline
+  std::string get_gstreamer_pipeline(const std::string &filename, int width, int height, double fps, bool is_color) {
+    std::ifstream model_file("~/r88_public/device-tree/model");
+    std::string encoder;
+
+    if (model_file.is_open()) {
+      std::string model;
+      std::getline(model_file, model);
+      if (model.find("Orin") != std::string::npos || model.find("Jetson AGX") != std::string::npos) {
+        encoder = "nvv4l2h264enc";
+      } else if (model.find("Jetson Nano") != std::string::npos) {
+        encoder = "omxh264enc";
+      }
+    }
+
+    if (encoder.empty()) {
+      // Fallback to software encoding if hardware encoder not found
+      return filename;
+    }
+
+    std::ostringstream pipeline;
+    pipeline << "appsrc ! videoconvert ! "
+            << encoder << " ! h264parse ! mp4mux ! filesink location=" << filename;
+
+    return pipeline.str();
+  }
+
+  // Utility function to generate fastest capture pipeline based on hardware
+  std::string get_capture_pipeline(const std::string &device, int width, int height, int fps) {
+    std::ifstream model_file("~/r88_public/device-tree/model");
+    std::string model;
+    if (model_file.is_open()) {
+      std::getline(model_file, model);
+    }
+
+    std::ostringstream pipeline;
+    if (model.find("Orin") != std::string::npos || model.find("Jetson AGX") != std::string::npos || model.find("Jetson Nano") != std::string::npos) {
+      // Jetson-optimized capture pipeline with hardware acceleration
+      pipeline << "v4l2src device=" << device
+              << " ! video/x-raw, width=" << width
+              << ", height=" << height
+              << ", framerate=" << fps << "/1 "
+              << "! nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! appsink";
+    } else {
+      // Generic fallback pipeline
+      pipeline << "v4l2src device=" << device
+              << " ! image/jpeg, width=" << width
+              << ", height=" << height
+              << ", framerate=" << fps << "/1 "
+              << "! jpegdec ! videoconvert ! appsink";
+    }
+
+    return pipeline.str();
+  }
 
   std::string mat_type2encoding(int mat_type)
   {
@@ -95,7 +149,7 @@ namespace opencv_cam
       next_stamp_ = now();
 
     } else {
-      std::string pipeline = "v4l2src device=" + cxt_.device_ + " ! image/jpeg, width=" + std::to_string(cxt_.width_) + ", height=" + std::to_string(cxt_.height_) + ", framerate=" + std::to_string(cxt_.fps_) + "/1 ! jpegdec ! videoconvert ! appsink";
+      std::string pipeline = get_capture_pipeline(cxt_.device_, cxt_.width_, cxt_.height_, cxt_.fps_);
       capture_ = std::make_shared<cv::VideoCapture>(pipeline, cv::CAP_GSTREAMER);
       if (see3cam_flag_) {
         capture_->set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y','1','6',' '));
@@ -438,10 +492,20 @@ namespace opencv_cam
       width = cxt_.width_;
     }
 
-    video_writer_.open(filename, 
-                        cv::VideoWriter::fourcc('H', '2', '6', '4'), 
-                        device_fps_, 
-                        cv::Size(width, cxt_.height_));
+    std::string pipeline = get_gstreamer_pipeline(filename, width, cxt_.height_, device_fps_, true);
+    bool use_pipeline = (pipeline != filename);
+
+    if (use_pipeline) {
+      RCLCPP_INFO(this->get_logger(), "Using GStreamer pipeline: %s", pipeline.c_str());
+    } else {
+      RCLCPP_INFO(this->get_logger(), "Using default OpenCV VideoWriter");
+    }
+
+    video_writer_.open(pipeline,
+                        use_pipeline ? cv::CAP_GSTREAMER : 0,
+                        device_fps_,
+                        cv::Size(width, cxt_.height_),
+                        true);
 
     if (!video_writer_.isOpened())
     {
@@ -455,11 +519,14 @@ namespace opencv_cam
     // If see3cam_flag_ set, open a second video writer for the IR image
     if (see3cam_flag_) {
       std::string filename_ir = filename.substr(0, filename.find_last_of(".")) + "_ir.mp4";
+      std::string pipeline_ir = get_gstreamer_pipeline(filename_ir, width, cxt_.height_, device_fps_, false);
+      bool use_pipeline_ir = (pipeline_ir != filename_ir);
 
-      video_writer_ir_.open(filename_ir, 
-        cv::VideoWriter::fourcc('H', '2', '6', '4'),
-        device_fps_, 
-        cv::Size(width, cxt_.height_), false);
+      video_writer_ir_.open(pipeline_ir,
+                            use_pipeline_ir ? cv::CAP_GSTREAMER : 0,
+                            device_fps_,
+                            cv::Size(width, cxt_.height_),
+                            false);
 
       if (!video_writer_ir_.isOpened())
       {
