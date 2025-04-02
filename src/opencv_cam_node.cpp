@@ -19,8 +19,10 @@ namespace opencv_cam
       std::string model;
       std::getline(model_file, model);
       if (model.find("Orin") != std::string::npos || model.find("Jetson AGX") != std::string::npos) {
+        std::cout << "OpenCV_Cam using hardware encoding for Orin/Jetson AGX" << std::endl;
         encoder = "nvv4l2h264enc";
       } else if (model.find("Jetson Nano") != std::string::npos) {
+        std::cout << "OpenCV_Cam using hardware encoding for Jetson Nano" << std::endl;
         encoder = "omxh264enc";
       }
     }
