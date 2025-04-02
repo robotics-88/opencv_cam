@@ -1,6 +1,11 @@
 #include "opencv_cam/opencv_cam_node.hpp"
 
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <cstdlib>
+#include <filesystem>
+#include <regex>
 
 #include "camera_calibration_parsers/parse.hpp"
 #include <sensor_msgs/image_encodings.hpp>
@@ -10,6 +15,7 @@
 
 namespace opencv_cam
 {
+  
   // Utility function to check hardware and return preferred GStreamer encoder pipeline
   std::string get_gstreamer_pipeline(const std::string &filename, int width, int height, double fps, bool is_color) {
     std::string home = std::getenv("HOME");
@@ -31,7 +37,6 @@ namespace opencv_cam
     }
 
     if (encoder.empty()) {
-      // Fallback to software encoding if hardware encoder not found
       return filename;
     }
 
@@ -42,7 +47,31 @@ namespace opencv_cam
     return pipeline.str();
   }
 
-  // Utility function to generate fastest capture pipeline based on hardware
+  // Utility: Determine camera pixel format using v4l2-ctl
+  std::string get_camera_pixel_format(const std::string &device) {
+    std::string cmd = "v4l2-ctl --device=" + device + " --get-fmt-video 2>&1";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return "";
+
+    char buffer[256];
+    std::string output;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+      output += buffer;
+    }
+    pclose(pipe);
+
+    std::smatch match;
+    if (std::regex_search(output, match, std::regex("Pixel Format:\s+'(\\w+)'"))) {
+      std::string fmt = match[1];
+      std::cout << "Detected camera pixel format: " << fmt << std::endl;
+      return fmt;
+    }
+
+    std::cout << "Could not detect pixel format, falling back to MJPEG pipeline." << std::endl;
+    return "MJPG"; // fallback
+  }
+
+  // Utility function to generate fastest capture pipeline based on hardware and camera format
   std::string get_capture_pipeline(const std::string &device, int width, int height, int fps) {
     std::string home = std::getenv("HOME");
     std::string path = home + "/r88_public/device-tree/model";
@@ -52,16 +81,24 @@ namespace opencv_cam
       std::getline(model_file, model);
     }
 
+    std::string format = get_camera_pixel_format(device);
     std::ostringstream pipeline;
+
     if (model.find("Orin") != std::string::npos || model.find("Jetson AGX") != std::string::npos || model.find("Jetson Nano") != std::string::npos) {
-      // Jetson-optimized capture pipeline with hardware acceleration
-      pipeline << "v4l2src device=" << device
-              << " ! video/x-raw, width=" << width
-              << ", height=" << height
-              << ", framerate=" << fps << "/1 "
-              << "! nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! appsink";
+      if (format == "MJPG") {
+        pipeline << "v4l2src device=" << device
+                << " ! image/jpeg, width=" << width
+                << ", height=" << height
+                << ", framerate=" << fps << "/1 "
+                << "! jpegdec ! nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! appsink";
+      } else {
+        pipeline << "v4l2src device=" << device
+                << " ! video/x-raw, width=" << width
+                << ", height=" << height
+                << ", framerate=" << fps << "/1 "
+                << "! nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! appsink";
+      }
     } else {
-      // Generic fallback pipeline
       pipeline << "v4l2src device=" << device
               << " ! image/jpeg, width=" << width
               << ", height=" << height
@@ -69,6 +106,7 @@ namespace opencv_cam
               << "! jpegdec ! videoconvert ! appsink";
     }
 
+    std::cout << "Final GStreamer pipeline: " << pipeline.str() << std::endl;
     return pipeline.str();
   }
 
