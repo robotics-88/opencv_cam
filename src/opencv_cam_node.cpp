@@ -12,12 +12,15 @@ namespace opencv_cam
 {
   // Utility function to check hardware and return preferred GStreamer encoder pipeline
   std::string get_gstreamer_pipeline(const std::string &filename, int width, int height, double fps, bool is_color) {
-    std::ifstream model_file("~/r88_public/device-tree/model");
+    std::string home = std::getenv("HOME");
+    std::string path = home + "/r88_public/device-tree/model";
+    std::ifstream model_file(path);
     std::string encoder;
 
     if (model_file.is_open()) {
       std::string model;
       std::getline(model_file, model);
+      std::cout << "Detected model: " << model << std::endl;
       if (model.find("Orin") != std::string::npos || model.find("Jetson AGX") != std::string::npos) {
         std::cout << "OpenCV_Cam using hardware encoding for Orin/Jetson AGX" << std::endl;
         encoder = "nvv4l2h264enc";
@@ -41,7 +44,9 @@ namespace opencv_cam
 
   // Utility function to generate fastest capture pipeline based on hardware
   std::string get_capture_pipeline(const std::string &device, int width, int height, int fps) {
-    std::ifstream model_file("~/r88_public/device-tree/model");
+    std::string home = std::getenv("HOME");
+    std::string path = home + "/r88_public/device-tree/model";
+    std::ifstream model_file(path);
     std::string model;
     if (model_file.is_open()) {
       std::getline(model_file, model);
