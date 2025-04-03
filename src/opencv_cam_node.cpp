@@ -30,14 +30,17 @@ namespace opencv_cam
       if (model.find("Orin") != std::string::npos || model.find("Jetson AGX") != std::string::npos) {
         std::cout << "OpenCV_Cam using hardware encoding for Orin/Jetson AGX" << std::endl;
         encoder = "nvv4l2h264enc";
-      } else if (model.find("Jetson Nano") != std::string::npos) {
-        std::cout << "OpenCV_Cam using hardware encoding for Jetson Nano" << std::endl;
-        encoder = "omxh264enc";
-      }
+      } 
+      // TODO figure out why Nano doesnt have the above encoder, it should be the same as NX
+      // else if (model.find("Jetson Nano") != std::string::npos) {
+      //   std::cout << "OpenCV_Cam using hardware encoding for Jetson Nano" << std::endl;
+      //   encoder = "nvv4l2h264enc";
+      // }
     }
 
     if (encoder.empty()) {
-      return filename;
+      std::cout << "Falling back to software x264enc encoder." << std::endl;
+      encoder = "x264enc speed-preset=ultrafast tune=zerolatency";
     }
 
     std::ostringstream pipeline;
