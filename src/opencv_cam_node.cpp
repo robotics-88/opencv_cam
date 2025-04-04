@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <regex>
+#include <opencv2/calib3d.hpp>
 
 #include "camera_calibration_parsers/parse.hpp"
 #include <sensor_msgs/image_encodings.hpp>
@@ -244,10 +245,22 @@ namespace opencv_cam
       camera_info_pub_ = nullptr;
     }
 
+    // Init fisheye
+    if (camera_info_msg_.distortion_model == "fisheye") {
+      K_fisheye_ = cv::Mat(3, 3, CV_64F, const_cast<double*>(camera_info_msg_.k.data())).clone();
+      D_fisheye_ = cv::Mat(1, camera_info_msg_.d.size(), CV_64F, const_cast<double*>(camera_info_msg_.d.data())).clone();
+      R_fisheye_ = cv::Mat(3, 3, CV_64F, const_cast<double*>(camera_info_msg_.r.data())).clone();
+      P_fisheye_ = cv::Mat(3, 4, CV_64F, const_cast<double*>(camera_info_msg_.p.data())).clone();
+      image_size_ = cv::Size(camera_info_msg_.width, camera_info_msg_.height);
+      initFisheyeUndistortMaps();
+    }
+
     image_pub_ = create_publisher<sensor_msgs::msg::Image>("image_raw", 10);
     if (see3cam_flag_) {
       image_ir_pub_ = create_publisher<sensor_msgs::msg::Image>("image_ir_raw", 10);
     }
+    rectified_image_pub_ = create_publisher<sensor_msgs::msg::Image>("image_rect", 10);
+
 
     // Video recorder service
     record_service_ = this->create_service<messages_88::srv::RecordVideo>("~/record", std::bind(&OpencvCamNode::recordVideoCallback, this, std::placeholders::_1, std::placeholders::_2));
@@ -282,6 +295,24 @@ namespace opencv_cam
 
   void OpencvCamNode::validate_parameters()
   {}
+
+  void OpencvCamNode::initFisheyeUndistortMaps()
+  {
+    if (!fisheye_maps_initialized_ && camera_info_msg_.distortion_model == "fisheye") {
+      cv::fisheye::initUndistortRectifyMap(
+        K_fisheye_,
+        D_fisheye_,
+        R_fisheye_,
+        K_fisheye_, // Or P_fisheye_.colRange(0, 3) if you want to project to new intrinsics
+        image_size_,
+        CV_16SC2,
+        map1_,
+        map2_);
+      fisheye_maps_initialized_ = true;
+      RCLCPP_INFO(this->get_logger(), "Initialized fisheye undistort maps");
+    }
+  }
+
 
   bool OpencvCamNode::SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat* IRImageCU83, cv::Mat* RGBImageCU83, int *RGBBufferSizeCU83, int *IRBufferSizeCU83)
   {
@@ -503,6 +534,22 @@ namespace opencv_cam
       camera_info_msg_.header.stamp = stamp;
       camera_info_pub_->publish(camera_info_msg_);
     }
+    if (camera_info_msg_.distortion_model == "fisheye") {
+      cv::Mat undistorted;
+      cv::remap(frame, undistorted, map1_, map2_, cv::INTER_LINEAR);
+    
+      sensor_msgs::msg::Image::UniquePtr rectified_msg(new sensor_msgs::msg::Image());
+      rectified_msg->header.stamp = stamp;
+      rectified_msg->header.frame_id = cxt_.camera_frame_id_;
+      rectified_msg->height = undistorted.rows;
+      rectified_msg->width = undistorted.cols;
+      rectified_msg->encoding = mat_type2encoding(undistorted.type());
+      rectified_msg->is_bigendian = false;
+      rectified_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(undistorted.step);
+      rectified_msg->data.assign(undistorted.datastart, undistorted.dataend);
+      rectified_image_pub_->publish(std::move(rectified_msg));
+    }
+    
 
     if (last_frame_.empty() || last_frame_.size != frame.size || last_frame_.type() != frame.type()) {
       last_frame_ = frame.clone();

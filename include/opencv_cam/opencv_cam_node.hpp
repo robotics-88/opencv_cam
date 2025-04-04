@@ -33,8 +33,15 @@ namespace opencv_cam
     rclcpp::Time next_stamp_;
     bool see3cam_flag_;
 
+    // Fisheye
+    cv::Mat map1_, map2_;
+    bool fisheye_maps_initialized_ = false;
+    cv::Mat K_fisheye_, D_fisheye_, R_fisheye_, P_fisheye_;
+    cv::Size image_size_;
+
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_ir_pub_;
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr rectified_image_pub_; // for fisheye rectification
     rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr meas_fps_pub_;
     rclcpp::Service<messages_88::srv::RecordVideo>::SharedPtr record_service_;
@@ -72,6 +79,7 @@ namespace opencv_cam
   private:
 
     void validate_parameters();
+    void initFisheyeUndistortMaps();
     bool SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat* IRImageCU83, cv::Mat* RGBImageCU83, int *RGBBufferSizeCU83, int *IRBufferSizeCU83);
 
     void handleSee3CamFrame(cv::Mat &frame, rclcpp::Time stamp);
