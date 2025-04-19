@@ -45,8 +45,15 @@ namespace opencv_cam
     }
 
     std::ostringstream pipeline;
-    pipeline << "appsrc ! videoconvert ! "
-            << encoder << " ! h264parse ! mp4mux ! filesink location=" << filename;
+    pipeline << "appsrc is-live=true do-timestamp=true "
+         << "! video/x-raw,format=BGR,width=" << width
+         << ",height=" << height
+         << ",framerate=" << static_cast<int>(fps) << "/1 "
+         << "! videoconvert "
+         << "! video/x-raw,format=NV12 "
+         << "! nvvidconv "
+         << "! " << encoder
+         << " ! h264parse ! mp4mux ! filesink location=" << filename;
 
     return pipeline.str();
   }
