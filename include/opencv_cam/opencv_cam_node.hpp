@@ -39,6 +39,9 @@ namespace opencv_cam
     cv::Mat K_fisheye_, D_fisheye_, R_fisheye_, P_fisheye_;
     cv::Size image_size_;
 
+    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr temp_sub_;
+    std::atomic<float> latest_temp_{NAN};
+
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_ir_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr rectified_image_pub_; // for fisheye rectification
