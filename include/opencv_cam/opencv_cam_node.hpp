@@ -33,6 +33,9 @@ namespace opencv_cam
     rclcpp::Time next_stamp_;
     bool see3cam_flag_;
 
+    rclcpp::Subscription<std_msgs::msg::Float32>::SharedPtr temp_sub_;
+    std::atomic<float> latest_temp_{NAN};
+
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_ir_pub_;
     rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;

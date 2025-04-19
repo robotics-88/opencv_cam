@@ -156,6 +156,12 @@ namespace opencv_cam
 
     meas_fps_pub_ = create_publisher<std_msgs::msg::Float32>("meas_fps", 10);
 
+    temp_sub_ = this->create_subscription<std_msgs::msg::Float32>(
+      "/i2c_temperature", 10,
+      [this](std_msgs::msg::Float32::SharedPtr msg) {
+        latest_temp_ = msg->data;
+      });    
+
     // Publish how many frames received in last second
     meas_fps_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() {
       std_msgs::msg::Float32 msg;
@@ -377,6 +383,13 @@ namespace opencv_cam
     std::lock_guard<std::mutex> lock(frame_mutex_);
     // Avoid copying image message if possible
     sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
+
+    if (!std::isnan(latest_temp_)) {
+      std::ostringstream temp_text;
+      temp_text << std::fixed << std::setprecision(1) << latest_temp_ << " °C";
+      cv::putText(frame, temp_text.str(), cv::Point(20, 50),
+                  cv::FONT_HERSHEY_SIMPLEX, 1.5, cv::Scalar(0, 165, 255), 3); // Orange
+    }    
 
     // Convert OpenCV Mat to ROS Image
     image_msg->header.stamp = stamp;
