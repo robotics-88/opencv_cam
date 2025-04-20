@@ -59,6 +59,7 @@ namespace opencv_cam
     cv::VideoWriter video_writer_ir_;
 
     cv::Mat last_frame_;
+    cv::Mat last_rect_frame_;
     cv::Mat last_ir_frame_;
 
     std::string map_frame_;

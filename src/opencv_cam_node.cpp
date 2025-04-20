@@ -561,6 +561,7 @@ namespace opencv_cam
       cv::Point2f center(undistorted.cols / 2.0, undistorted.rows / 2.0);
       cv::Mat rotation_matrix = cv::getRotationMatrix2D(center, 180, 1.0);
       cv::warpAffine(undistorted, rotated_image, rotation_matrix, undistorted.size());
+      last_rect_frame_ = rotated_image.clone();
     
       sensor_msgs::msg::Image::UniquePtr rectified_msg(new sensor_msgs::msg::Image());
       rectified_msg->header.stamp = stamp;
@@ -725,7 +726,11 @@ namespace opencv_cam
 
       // TODO: determine why see3cam write takes so long and therefore causes delays.
       if (video_writer_.isOpened()) {
-        video_writer_.write(last_frame_);
+        if (camera_info_msg_.distortion_model == "fisheye") {
+          video_writer_.write(last_rect_frame_);
+        } else {
+          video_writer_.write(last_frame_);
+        }
       }
       if (video_writer_ir_.isOpened()) {
         video_writer_ir_.write(last_ir_frame_);
