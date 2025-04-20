@@ -735,7 +735,7 @@ namespace opencv_cam
       if (video_writer_ir_.isOpened()) {
         video_writer_ir_.write(last_ir_frame_);
       }
-      writeToPoseFile();
+      // writeToPoseFile();
       written_frame_count_++;
     }
   }
