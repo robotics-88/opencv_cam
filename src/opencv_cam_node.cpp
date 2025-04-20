@@ -557,16 +557,20 @@ namespace opencv_cam
     if (camera_info_msg_.distortion_model == "fisheye") {
       cv::Mat undistorted;
       cv::remap(frame, undistorted, map1_, map2_, cv::INTER_LINEAR);
+      cv::Mat rotated_image;
+      cv::Point2f center(undistorted.cols / 2.0, undistorted.rows / 2.0);
+      cv::Mat rotation_matrix = cv::getRotationMatrix2D(center, 180, 1.0);
+      cv::warpAffine(undistorted, rotated_image, rotation_matrix, undistorted.size());
     
       sensor_msgs::msg::Image::UniquePtr rectified_msg(new sensor_msgs::msg::Image());
       rectified_msg->header.stamp = stamp;
       rectified_msg->header.frame_id = cxt_.camera_frame_id_;
-      rectified_msg->height = undistorted.rows;
-      rectified_msg->width = undistorted.cols;
-      rectified_msg->encoding = mat_type2encoding(undistorted.type());
+      rectified_msg->height = rotated_image.rows;
+      rectified_msg->width = rotated_image.cols;
+      rectified_msg->encoding = mat_type2encoding(rotated_image.type());
       rectified_msg->is_bigendian = false;
-      rectified_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(undistorted.step);
-      rectified_msg->data.assign(undistorted.datastart, undistorted.dataend);
+      rectified_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(rotated_image.step);
+      rectified_msg->data.assign(rotated_image.datastart, rotated_image.dataend);
       rectified_image_pub_->publish(std::move(rectified_msg));
     }
     
