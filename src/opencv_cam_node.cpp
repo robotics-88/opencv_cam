@@ -1,6 +1,12 @@
 #include "opencv_cam/opencv_cam_node.hpp"
 
 #include <iostream>
+#include <fstream>
+#include <sstream>
+#include <cstdlib>
+#include <filesystem>
+#include <regex>
+#include <opencv2/calib3d.hpp>
 
 #include "camera_calibration_parsers/parse.hpp"
 #include <sensor_msgs/image_encodings.hpp>
@@ -10,6 +16,110 @@
 
 namespace opencv_cam
 {
+  
+  // Utility function to check hardware and return preferred GStreamer encoder pipeline
+  std::string get_gstreamer_pipeline(const std::string &filename, int width, int height, double fps, bool is_color) {
+    std::string home = std::getenv("HOME");
+    std::string path = home + "/r88_public/device-tree/model";
+    std::ifstream model_file(path);
+    std::string encoder;
+
+    if (model_file.is_open()) {
+      std::string model;
+      std::getline(model_file, model);
+      std::cout << "Detected model: " << model << std::endl;
+      if (model.find("Orin") != std::string::npos || model.find("Jetson AGX") != std::string::npos) {
+        std::cout << "OpenCV_Cam using hardware encoding for Orin/Jetson AGX" << std::endl;
+        encoder = "nvv4l2h264enc";
+      } 
+      // TODO figure out why Nano doesnt have the above encoder, it should be the same as NX
+      // else if (model.find("Jetson Nano") != std::string::npos) {
+      //   std::cout << "OpenCV_Cam using hardware encoding for Jetson Nano" << std::endl;
+      //   encoder = "nvv4l2h264enc";
+      // }
+    }
+
+    if (encoder.empty()) {
+      std::cout << "Falling back to software x264enc encoder." << std::endl;
+      encoder = "x264enc speed-preset=ultrafast tune=zerolatency";
+    }
+
+    std::ostringstream pipeline;
+    pipeline << "appsrc is-live=true do-timestamp=true "
+         << "! video/x-raw,format=BGR,width=" << width
+         << ",height=" << height
+         << ",framerate=" << static_cast<int>(fps) << "/1 "
+         << "! videorate "
+         << "! video/x-raw,framerate=" << static_cast<int>(fps) << "/1 "
+         << "! videoconvert ! video/x-raw,format=NV12 "
+         << "! nvvidconv ! " << encoder
+         << " ! h264parse ! mp4mux ! filesink location=" << filename;
+
+    return pipeline.str();
+  }
+
+  // Utility: Determine camera pixel format using v4l2-ctl
+  std::string get_camera_pixel_format(const std::string &device) {
+    std::string cmd = "v4l2-ctl --device=" + device + " --get-fmt-video 2>&1";
+    FILE* pipe = popen(cmd.c_str(), "r");
+    if (!pipe) return "";
+
+    char buffer[256];
+    std::string output;
+    while (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
+      output += buffer;
+    }
+    pclose(pipe);
+
+    std::smatch match;
+    if (std::regex_search(output, match, std::regex("Pixel Format:\s+'(\\w+)'"))) {
+      std::string fmt = match[1];
+      std::cout << "Detected camera pixel format: " << fmt << std::endl;
+      return fmt;
+    }
+
+    std::cout << "Could not detect pixel format, falling back to MJPEG pipeline." << std::endl;
+    return "MJPG"; // fallback
+  }
+
+  // Utility function to generate fastest capture pipeline based on hardware and camera format
+  std::string get_capture_pipeline(const std::string &device, int width, int height, int fps) {
+    std::string home = std::getenv("HOME");
+    std::string path = home + "/r88_public/device-tree/model";
+    std::ifstream model_file(path);
+    std::string model;
+    if (model_file.is_open()) {
+      std::getline(model_file, model);
+    }
+
+    std::string format = get_camera_pixel_format(device);
+    std::ostringstream pipeline;
+
+    if (model.find("Orin") != std::string::npos || model.find("Jetson AGX") != std::string::npos || model.find("Jetson Nano") != std::string::npos) {
+      if (format == "MJPG") {
+        pipeline << "v4l2src device=" << device
+                << " ! image/jpeg, width=" << width
+                << ", height=" << height
+                << ", framerate=" << fps << "/1 "
+                << "! jpegdec ! nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! appsink";
+      } else {
+        pipeline << "v4l2src device=" << device
+                << " ! video/x-raw, width=" << width
+                << ", height=" << height
+                << ", framerate=" << fps << "/1 "
+                << "! nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! appsink";
+      }
+    } else {
+      pipeline << "v4l2src device=" << device
+              << " ! image/jpeg, width=" << width
+              << ", height=" << height
+              << ", framerate=" << fps << "/1 "
+              << "! jpegdec ! videoconvert ! appsink";
+    }
+
+    std::cout << "Final GStreamer pipeline: " << pipeline.str() << std::endl;
+    return pipeline.str();
+  }
 
   std::string mat_type2encoding(int mat_type)
   {
@@ -95,7 +205,8 @@ namespace opencv_cam
       next_stamp_ = now();
 
     } else {
-      capture_ = std::make_shared<cv::VideoCapture>(cxt_.device_, cv::CAP_V4L2);
+      std::string pipeline = get_capture_pipeline(cxt_.device_, cxt_.width_, cxt_.height_, cxt_.fps_);
+      capture_ = std::make_shared<cv::VideoCapture>(pipeline, cv::CAP_GSTREAMER);
       if (see3cam_flag_) {
         capture_->set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y','1','6',' '));
         capture_->set(cv::CAP_PROP_CONVERT_RGB, false);
@@ -141,10 +252,22 @@ namespace opencv_cam
       camera_info_pub_ = nullptr;
     }
 
+    // Init fisheye
+    if (camera_info_msg_.distortion_model == "fisheye") {
+      K_fisheye_ = cv::Mat(3, 3, CV_64F, const_cast<double*>(camera_info_msg_.k.data())).clone();
+      D_fisheye_ = cv::Mat(1, camera_info_msg_.d.size(), CV_64F, const_cast<double*>(camera_info_msg_.d.data())).clone();
+      R_fisheye_ = cv::Mat(3, 3, CV_64F, const_cast<double*>(camera_info_msg_.r.data())).clone();
+      P_fisheye_ = cv::Mat(3, 4, CV_64F, const_cast<double*>(camera_info_msg_.p.data())).clone();
+      image_size_ = cv::Size(camera_info_msg_.width, camera_info_msg_.height);
+      initFisheyeUndistortMaps();
+    }
+
     image_pub_ = create_publisher<sensor_msgs::msg::Image>("image_raw", 10);
     if (see3cam_flag_) {
       image_ir_pub_ = create_publisher<sensor_msgs::msg::Image>("image_ir_raw", 10);
     }
+    rectified_image_pub_ = create_publisher<sensor_msgs::msg::Image>("image_rect", 10);
+
 
     // Video recorder service
     record_service_ = this->create_service<messages_88::srv::RecordVideo>("~/record", std::bind(&OpencvCamNode::recordVideoCallback, this, std::placeholders::_1, std::placeholders::_2));
@@ -155,6 +278,12 @@ namespace opencv_cam
     RCLCPP_INFO(get_logger(), "Start publishing");
 
     meas_fps_pub_ = create_publisher<std_msgs::msg::Float32>("meas_fps", 10);
+
+    temp_sub_ = this->create_subscription<std_msgs::msg::Float32>(
+      "/i2c_temperature", 10,
+      [this](std_msgs::msg::Float32::SharedPtr msg) {
+        latest_temp_ = msg->data;
+      });    
 
     // Publish how many frames received in last second
     meas_fps_timer_ = create_wall_timer(std::chrono::seconds(1), [this]() {
@@ -179,6 +308,24 @@ namespace opencv_cam
 
   void OpencvCamNode::validate_parameters()
   {}
+
+  void OpencvCamNode::initFisheyeUndistortMaps()
+  {
+    if (!fisheye_maps_initialized_ && camera_info_msg_.distortion_model == "fisheye") {
+      cv::fisheye::initUndistortRectifyMap(
+        K_fisheye_,
+        D_fisheye_,
+        R_fisheye_,
+        K_fisheye_, // Or P_fisheye_.colRange(0, 3) if you want to project to new intrinsics
+        image_size_,
+        CV_16SC2,
+        map1_,
+        map2_);
+      fisheye_maps_initialized_ = true;
+      RCLCPP_INFO(this->get_logger(), "Initialized fisheye undistort maps");
+    }
+  }
+
 
   bool OpencvCamNode::SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat* IRImageCU83, cv::Mat* RGBImageCU83, int *RGBBufferSizeCU83, int *IRBufferSizeCU83)
   {
@@ -378,6 +525,13 @@ namespace opencv_cam
     // Avoid copying image message if possible
     sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
 
+    if (!std::isnan(latest_temp_)) {
+      std::ostringstream temp_text;
+      temp_text << std::fixed << std::setprecision(1) << latest_temp_ << " °C";
+      cv::putText(frame, temp_text.str(), cv::Point(20, 50),
+                  cv::FONT_HERSHEY_SIMPLEX, 1.5, cv::Scalar(0, 165, 255), 3); // Orange
+    }    
+
     // Convert OpenCV Mat to ROS Image
     image_msg->header.stamp = stamp;
     image_msg->header.frame_id = cxt_.camera_frame_id_;
@@ -400,6 +554,27 @@ namespace opencv_cam
       camera_info_msg_.header.stamp = stamp;
       camera_info_pub_->publish(camera_info_msg_);
     }
+    if (camera_info_msg_.distortion_model == "fisheye") {
+      cv::Mat undistorted;
+      cv::remap(frame, undistorted, map1_, map2_, cv::INTER_LINEAR);
+      cv::Mat rotated_image;
+      cv::Point2f center(undistorted.cols / 2.0, undistorted.rows / 2.0);
+      cv::Mat rotation_matrix = cv::getRotationMatrix2D(center, 180, 1.0);
+      cv::warpAffine(undistorted, rotated_image, rotation_matrix, undistorted.size());
+      last_rect_frame_ = rotated_image.clone();
+    
+      sensor_msgs::msg::Image::UniquePtr rectified_msg(new sensor_msgs::msg::Image());
+      rectified_msg->header.stamp = stamp;
+      rectified_msg->header.frame_id = cxt_.camera_frame_id_;
+      rectified_msg->height = rotated_image.rows;
+      rectified_msg->width = rotated_image.cols;
+      rectified_msg->encoding = mat_type2encoding(rotated_image.type());
+      rectified_msg->is_bigendian = false;
+      rectified_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(rotated_image.step);
+      rectified_msg->data.assign(rotated_image.datastart, rotated_image.dataend);
+      rectified_image_pub_->publish(std::move(rectified_msg));
+    }
+    
 
     if (last_frame_.empty() || last_frame_.size != frame.size || last_frame_.type() != frame.type()) {
       last_frame_ = frame.clone();
@@ -437,10 +612,20 @@ namespace opencv_cam
       width = cxt_.width_;
     }
 
-    video_writer_.open(filename, 
-                        cv::VideoWriter::fourcc('H', '2', '6', '4'), 
-                        device_fps_, 
-                        cv::Size(width, cxt_.height_));
+    std::string pipeline = get_gstreamer_pipeline(filename, width, cxt_.height_, device_fps_, true);
+    bool use_pipeline = (pipeline != filename);
+
+    if (use_pipeline) {
+      RCLCPP_INFO(this->get_logger(), "Using GStreamer pipeline: %s", pipeline.c_str());
+    } else {
+      RCLCPP_INFO(this->get_logger(), "Using default OpenCV VideoWriter");
+    }
+
+    video_writer_.open(pipeline,
+                        use_pipeline ? cv::CAP_GSTREAMER : 0,
+                        device_fps_,
+                        cv::Size(width, cxt_.height_),
+                        true);
 
     if (!video_writer_.isOpened())
     {
@@ -454,11 +639,14 @@ namespace opencv_cam
     // If see3cam_flag_ set, open a second video writer for the IR image
     if (see3cam_flag_) {
       std::string filename_ir = filename.substr(0, filename.find_last_of(".")) + "_ir.mp4";
+      std::string pipeline_ir = get_gstreamer_pipeline(filename_ir, width, cxt_.height_, device_fps_, false);
+      bool use_pipeline_ir = (pipeline_ir != filename_ir);
 
-      video_writer_ir_.open(filename_ir, 
-        cv::VideoWriter::fourcc('H', '2', '6', '4'),
-        device_fps_, 
-        cv::Size(width, cxt_.height_), false);
+      video_writer_ir_.open(pipeline_ir,
+                            use_pipeline_ir ? cv::CAP_GSTREAMER : 0,
+                            device_fps_,
+                            cv::Size(width, cxt_.height_),
+                            false);
 
       if (!video_writer_ir_.isOpened())
       {
@@ -538,12 +726,16 @@ namespace opencv_cam
 
       // TODO: determine why see3cam write takes so long and therefore causes delays.
       if (video_writer_.isOpened()) {
-        video_writer_.write(last_frame_);
+        if (camera_info_msg_.distortion_model == "fisheye") {
+          video_writer_.write(last_rect_frame_);
+        } else {
+          video_writer_.write(last_frame_);
+        }
       }
       if (video_writer_ir_.isOpened()) {
         video_writer_ir_.write(last_ir_frame_);
       }
-      writeToPoseFile();
+      // writeToPoseFile();
       written_frame_count_++;
     }
   }
