@@ -295,6 +295,8 @@ namespace opencv_cam
 
     record_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / device_fps_), std::bind(&OpencvCamNode::writeVideo, this));
 
+    // TESTING
+    startRecording("/home/jetson/recording.mp4");
   }
 
   OpencvCamNode::~OpencvCamNode()
@@ -612,7 +614,11 @@ namespace opencv_cam
       width = cxt_.width_;
     }
 
-    std::string pipeline = get_gstreamer_pipeline(filename, width, cxt_.height_, device_fps_, true);
+    // TEST
+    // std::string pipeline = get_gstreamer_pipeline(filename, width, cxt_.height_, device_fps_, true);
+    std::string pipeline = "appsrc ! videoconvert ! nvvidconv "
+      "! nvv4l2h264enc ! h264parse ! mp4mux "
+      "! filesink location=" + filename;
     bool use_pipeline = (pipeline != filename);
 
     if (use_pipeline) {

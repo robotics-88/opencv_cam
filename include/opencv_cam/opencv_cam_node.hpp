@@ -69,6 +69,10 @@ namespace opencv_cam
     int last_frame_count_;
 
     bool recording_;
+    std::thread writer_thread_;
+    std::queue<cv::Mat> frame_queue_;
+    std::condition_variable cv_;
+    bool stop_writer_thread_ = false;
 
     std::mutex frame_mutex_;
 
