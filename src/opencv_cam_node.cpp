@@ -18,44 +18,33 @@ namespace opencv_cam
 {
   
   // Utility function to check hardware and return preferred GStreamer encoder pipeline
-  std::string get_gstreamer_pipeline(const std::string &filename, int width, int height, double fps, bool is_color) {
+  std::string get_gstreamer_pipeline(const std::string &filename) {
     std::string home = std::getenv("HOME");
     std::string path = home + "/r88_public/device-tree/model";
     std::ifstream model_file(path);
-    std::string encoder;
-
+    std::string pipeline;
     if (model_file.is_open()) {
       std::string model;
       std::getline(model_file, model);
       std::cout << "Detected model: " << model << std::endl;
       if (model.find("Orin") != std::string::npos || model.find("Jetson AGX") != std::string::npos) {
         std::cout << "OpenCV_Cam using hardware encoding for Orin/Jetson AGX" << std::endl;
-        encoder = "nvv4l2h264enc";
       } 
       // TODO figure out why Nano doesnt have the above encoder, it should be the same as NX
       // else if (model.find("Jetson Nano") != std::string::npos) {
       //   std::cout << "OpenCV_Cam using hardware encoding for Jetson Nano" << std::endl;
       //   encoder = "nvv4l2h264enc";
       // }
+
+      pipeline = "appsrc ! videoconvert ! nvvidconv ! nvv4l2h264enc preset-level=1 insert-sps-pps=true "
+                             "! h264parse ! mp4mux ! filesink location=" + filename;
+    }
+    else {
+      pipeline = "appsrc ! videoconvert ! x264enc speed-preset=ultrafast tune=zerolatency "
+                             "! h264parse ! mp4mux ! filesink location=" + filename;
     }
 
-    if (encoder.empty()) {
-      std::cout << "Falling back to software x264enc encoder." << std::endl;
-      encoder = "x264enc speed-preset=ultrafast tune=zerolatency";
-    }
-
-    std::ostringstream pipeline;
-    pipeline << "appsrc is-live=true do-timestamp=true "
-         << "! video/x-raw,format=BGR,width=" << width
-         << ",height=" << height
-         << ",framerate=" << static_cast<int>(fps) << "/1 "
-         << "! videorate "
-         << "! video/x-raw,framerate=" << static_cast<int>(fps) << "/1 "
-         << "! videoconvert ! video/x-raw,format=NV12 "
-         << "! nvvidconv ! " << encoder
-         << " ! h264parse ! mp4mux ! filesink location=" << filename;
-
-    return pipeline.str();
+    return pipeline;
   }
 
   // Utility: Determine camera pixel format using v4l2-ctl
@@ -293,10 +282,10 @@ namespace opencv_cam
       last_frame_count_ = frame_count_;
     });
 
-    record_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / device_fps_), std::bind(&OpencvCamNode::writeVideo, this));
+    // record_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / device_fps_), std::bind(&OpencvCamNode::writeVideo, this));
 
     // TESTING
-    startRecording("/home/jetson/recording.mp4");
+    startRecording("/home/gus/test_recording.mp4");
   }
 
   OpencvCamNode::~OpencvCamNode()
@@ -578,11 +567,31 @@ namespace opencv_cam
     }
     
 
-    if (last_frame_.empty() || last_frame_.size != frame.size || last_frame_.type() != frame.type()) {
-      last_frame_ = frame.clone();
+    // if (last_frame_.empty() || last_frame_.size != frame.size || last_frame_.type() != frame.type()) {
+    //   last_frame_ = frame.clone();
+    // }
+    // else {
+    //   frame.copyTo(last_frame_);
+    // }
+
+    cv::Mat bgr_frame;
+    if (frame.channels() == 1) {
+      cv::cvtColor(frame, bgr_frame, cv::COLOR_GRAY2BGR);
+    } else if (frame.channels() == 4) {
+      cv::cvtColor(frame, bgr_frame, cv::COLOR_BGRA2BGR);
+    } else {
+      bgr_frame = frame;  // Assume already BGR
     }
-    else {
-      frame.copyTo(last_frame_);
+
+    if (recording_) {
+      // Add the frame to the queue
+      std::lock_guard<std::mutex> lock(writer_mutex_);
+      if (frame_queue_.size() < 100) {
+        frame_queue_.push(bgr_frame.clone());
+        cv_.notify_one();
+      } else {
+        RCLCPP_WARN(this->get_logger(), "Frame queue full, dropping frame");
+      }
     }
   }
 
@@ -615,10 +624,7 @@ namespace opencv_cam
     }
 
     // TEST
-    // std::string pipeline = get_gstreamer_pipeline(filename, width, cxt_.height_, device_fps_, true);
-    std::string pipeline = "appsrc ! videoconvert ! nvvidconv "
-      "! nvv4l2h264enc ! h264parse ! mp4mux "
-      "! filesink location=" + filename;
+    std::string pipeline = get_gstreamer_pipeline(filename);
     bool use_pipeline = (pipeline != filename);
 
     if (use_pipeline) {
@@ -645,7 +651,7 @@ namespace opencv_cam
     // If see3cam_flag_ set, open a second video writer for the IR image
     if (see3cam_flag_) {
       std::string filename_ir = filename.substr(0, filename.find_last_of(".")) + "_ir.mp4";
-      std::string pipeline_ir = get_gstreamer_pipeline(filename_ir, width, cxt_.height_, device_fps_, false);
+      std::string pipeline_ir = get_gstreamer_pipeline(filename_ir);
       bool use_pipeline_ir = (pipeline_ir != filename_ir);
 
       video_writer_ir_.open(pipeline_ir,
@@ -665,6 +671,8 @@ namespace opencv_cam
     }
 
     recording_ = true;
+    stop_writer_thread_ = false;
+    writer_thread_ = std::thread(&OpencvCamNode::writerLoop, this);
 
     // Open the pose file
     std::string pose_filename = filename.substr(0, filename.find_last_of(".")) + "_pose.txt";
@@ -676,6 +684,14 @@ namespace opencv_cam
   bool OpencvCamNode::stopRecording() {
     if (recording_)
     {
+      {std::lock_guard<std::mutex> lock(writer_mutex_);
+        stop_writer_thread_ = true;
+      }
+      cv_.notify_all();
+      if (writer_thread_.joinable()) {
+        writer_thread_.join();
+      }
+
       if (video_writer_.isOpened())
         video_writer_.release();
       if (video_writer_ir_.isOpened())
@@ -743,6 +759,27 @@ namespace opencv_cam
       }
       // writeToPoseFile();
       written_frame_count_++;
+    }
+  }
+
+  void OpencvCamNode::writerLoop() {
+    while (true) {
+      cv::Mat frame;
+      {
+        std::unique_lock<std::mutex> lock(writer_mutex_);
+        cv_.wait(lock, [this] {
+          return !frame_queue_.empty() || stop_writer_thread_;
+        });
+
+        if (stop_writer_thread_ && frame_queue_.empty()) break;
+
+        frame = std::move(frame_queue_.front());
+        frame_queue_.pop();
+      }
+
+      if (!frame.empty()) {
+        video_writer_.write(frame);  // This can block safely in this thread
+      }
     }
   }
 
