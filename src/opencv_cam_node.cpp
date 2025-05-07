@@ -282,10 +282,7 @@ namespace opencv_cam
       last_frame_count_ = frame_count_;
     });
 
-    // record_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / device_fps_), std::bind(&OpencvCamNode::writeVideo, this));
-
-    // TESTING
-    startRecording("/home/gus/test_recording.mp4");
+    //record_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / device_fps_), std::bind(&OpencvCamNode::writeVideo, this));
   }
 
   OpencvCamNode::~OpencvCamNode()
@@ -623,7 +620,6 @@ namespace opencv_cam
       width = cxt_.width_;
     }
 
-    // TEST
     std::string pipeline = get_gstreamer_pipeline(filename);
     bool use_pipeline = (pipeline != filename);
 
