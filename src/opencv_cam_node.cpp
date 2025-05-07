@@ -572,20 +572,31 @@ namespace opencv_cam
     // }
 
     cv::Mat bgr_frame;
-    if (frame.channels() == 1) {
-      cv::cvtColor(frame, bgr_frame, cv::COLOR_GRAY2BGR);
-    } else if (frame.channels() == 4) {
-      cv::cvtColor(frame, bgr_frame, cv::COLOR_BGRA2BGR);
-    } else {
-      bgr_frame = frame;  // Assume already BGR
+    if (camera_info_msg_.distortion_model == "fisheye") {
+      if (frame.channels() == 1) {
+        cv::cvtColor(last_rect_frame_, bgr_frame, cv::COLOR_GRAY2BGR);
+      } else if (frame.channels() == 4) {
+        cv::cvtColor(last_rect_frame_, bgr_frame, cv::COLOR_BGRA2BGR);
+      } else {
+        bgr_frame = last_rect_frame_;  // Assume already BGR
+      }  
     }
-
+    else {
+      if (frame.channels() == 1) {
+        cv::cvtColor(frame, bgr_frame, cv::COLOR_GRAY2BGR);
+      } else if (frame.channels() == 4) {
+        cv::cvtColor(frame, bgr_frame, cv::COLOR_BGRA2BGR);
+      } else {
+        bgr_frame = frame;  // Assume already BGR
+      }
+  
+    }
+    
     if (recording_) {
       // Add the frame to the queue
       std::lock_guard<std::mutex> lock(writer_mutex_);
       if (frame_queue_.size() < 100) {
         frame_queue_.push(bgr_frame.clone());
-        cv_.notify_one();
       } else {
         RCLCPP_WARN(this->get_logger(), "Frame queue full, dropping frame");
       }
@@ -683,7 +694,6 @@ namespace opencv_cam
       {std::lock_guard<std::mutex> lock(writer_mutex_);
         stop_writer_thread_ = true;
       }
-      cv_.notify_all();
       if (writer_thread_.joinable()) {
         writer_thread_.join();
       }
@@ -759,26 +769,26 @@ namespace opencv_cam
   }
 
   void OpencvCamNode::writerLoop() {
-    while (true) {
-      cv::Mat frame;
+    cv::Mat last_frame;
+    rclcpp::Rate rate(device_fps_);
+
+    while (rclcpp::ok()) {
       {
         std::unique_lock<std::mutex> lock(writer_mutex_);
-        cv_.wait(lock, [this] {
-          return !frame_queue_.empty() || stop_writer_thread_;
-        });
-
-        if (stop_writer_thread_ && frame_queue_.empty()) break;
-
-        frame = std::move(frame_queue_.front());
-        frame_queue_.pop();
+        if (!frame_queue_.empty()) {
+          last_frame = std::move(frame_queue_.front());
+          frame_queue_.pop();
+        }
       }
-
-      if (!frame.empty()) {
-        video_writer_.write(frame);  // This can block safely in this thread
+  
+      if (!last_frame.empty()) {
+        video_writer_.write(last_frame);
       }
+  
+      if (stop_writer_thread_) break;
+      rate.sleep();
     }
   }
-
 } // namespace opencv_cam
 
 #include "rclcpp_components/register_node_macro.hpp"
