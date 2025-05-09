@@ -2,6 +2,7 @@
 #define OPENCV_CAM_HPP
 
 #include <fstream>
+#include <queue>
 
 #include <opencv2/imgproc.hpp>
 #include "opencv2/highgui/highgui.hpp"
@@ -69,6 +70,10 @@ namespace opencv_cam
     int last_frame_count_;
 
     bool recording_;
+    std::thread writer_thread_;
+    std::queue<cv::Mat> frame_queue_;
+    bool stop_writer_thread_ = false;
+    std::mutex writer_mutex_;
 
     std::mutex frame_mutex_;
 
@@ -96,6 +101,7 @@ namespace opencv_cam
     bool startRecording(const std::string &filename);
     
     void loop();
+    void writerLoop();
   };
 
 } // namespace opencv_cam
