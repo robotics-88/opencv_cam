@@ -4,23 +4,21 @@
 #include <fstream>
 #include <queue>
 
-#include <opencv2/imgproc.hpp>
+#include "messages_88/srv/record_video.hpp"
 #include "opencv2/highgui/highgui.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "std_msgs/msg/float32.hpp"
-#include "messages_88/srv/record_video.hpp"
+#include <opencv2/imgproc.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
 #include "opencv_cam/camera_context.hpp"
 
-namespace opencv_cam
-{
+namespace opencv_cam {
 
-  class OpencvCamNode : public rclcpp::Node
-  {
+class OpencvCamNode : public rclcpp::Node {
     CameraContext cxt_;
 
     std::thread thread_;
@@ -45,7 +43,8 @@ namespace opencv_cam
 
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_pub_;
     rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr image_ir_pub_;
-    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr rectified_image_pub_; // for fisheye rectification
+    rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr
+        rectified_image_pub_; // for fisheye rectification
     rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr meas_fps_pub_;
     rclcpp::Service<messages_88::srv::RecordVideo>::SharedPtr record_service_;
@@ -78,7 +77,6 @@ namespace opencv_cam
     std::mutex frame_mutex_;
 
   public:
-
     explicit OpencvCamNode(const rclcpp::NodeOptions &options);
 
     ~OpencvCamNode() override;
@@ -86,10 +84,10 @@ namespace opencv_cam
     bool stopRecording();
 
   private:
-
     void validate_parameters();
     void initFisheyeUndistortMaps();
-    bool SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat* IRImageCU83, cv::Mat* RGBImageCU83, int *RGBBufferSizeCU83, int *IRBufferSizeCU83);
+    bool SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat *IRImageCU83, cv::Mat *RGBImageCU83,
+                                int *RGBBufferSizeCU83, int *IRBufferSizeCU83);
 
     void handleSee3CamFrame(cv::Mat &frame, rclcpp::Time stamp);
     void handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp);
@@ -97,13 +95,13 @@ namespace opencv_cam
     void writeVideo();
 
     bool recordVideoCallback(const std::shared_ptr<messages_88::srv::RecordVideo::Request> req,
-      std::shared_ptr<messages_88::srv::RecordVideo::Response> resp);
+                             std::shared_ptr<messages_88::srv::RecordVideo::Response> resp);
     bool startRecording(const std::string &filename);
-    
+
     void loop();
     void writerLoop();
-  };
+};
 
 } // namespace opencv_cam
 
-#endif //OPENCV_CAM_HPP
+#endif // OPENCV_CAM_HPP
