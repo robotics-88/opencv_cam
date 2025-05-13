@@ -1,14 +1,12 @@
 cmake_minimum_required(VERSION 3.5)
 project(opencv_cam)
 
-# Default to C++14
-if (NOT CMAKE_CXX_STANDARD)
-  set(CMAKE_CXX_STANDARD 14)
-endif ()
-
-if (CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+if(NOT CMAKE_CXX_STANDARD)
+  set(CMAKE_CXX_STANDARD 17)
+endif()
+if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
   add_compile_options(-Wall -Wextra -Wpedantic)
-endif ()
+endif()
 
 # Try for OpenCV 4.X, but settle for whatever is installed
 find_package(OpenCV 4 QUIET)
@@ -24,8 +22,9 @@ find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
 find_package(ros2_shared REQUIRED)
 find_package(sensor_msgs REQUIRED)
-find_package(messages_88 REQUIRED)
 find_package(tf2_ros REQUIRED)
+find_package(opencv_cam_msgs REQUIRED)
+
 
 # Package includes not needed for CMake >= 2.8.11
 include_directories(
@@ -57,7 +56,7 @@ ament_target_dependencies(
   rclcpp_components
   sensor_msgs
   ros2_shared
-  messages_88
+  opencv_cam_msgs
   tf2_ros
 )
 rclcpp_components_register_nodes(opencv_cam_node "opencv_cam::OpencvCamNode")

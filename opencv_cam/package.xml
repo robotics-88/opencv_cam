@@ -23,8 +23,8 @@
     <depend>rclcpp</depend>
     <depend>ros2_shared</depend>
     <depend>sensor_msgs</depend>
-    <depend>messages_88</depend>
     <depend>tf2_ros</depend>
+    <depend>opencv_cam_msgs</depend>
 
     <export>
         <build_type>ament_cmake</build_type>

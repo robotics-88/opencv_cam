@@ -226,10 +226,9 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
     }
 
     assert(!cxt_.camera_info_path_.empty()); // readCalibration will crash if file_name is ""
-    std::string camera_name;
-    if (camera_calibration_parsers::readCalibration(cxt_.camera_info_path_, camera_name,
+    if (camera_calibration_parsers::readCalibration(cxt_.camera_info_path_, camera_name_,
                                                     camera_info_msg_)) {
-        RCLCPP_INFO(get_logger(), "got camera info for '%s'", camera_name.c_str());
+        RCLCPP_INFO(get_logger(), "got camera info for '%s'", camera_name_.c_str());
         camera_info_msg_.header.frame_id = cxt_.camera_frame_id_;
         camera_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("camera_info", 10);
     } else {
@@ -256,9 +255,9 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
     rectified_image_pub_ = create_publisher<sensor_msgs::msg::Image>("image_rect", 10);
 
     // Video recorder service
-    record_service_ = this->create_service<messages_88::srv::RecordVideo>(
-        "~/record", std::bind(&OpencvCamNode::recordVideoCallback, this, std::placeholders::_1,
-                              std::placeholders::_2));
+    trigger_recording_sub_ = this->create_subscription<opencv_cam_msgs::msg::TriggerRecording>(
+        "/trigger_recording", 10,
+        std::bind(&OpencvCamNode::triggerRecordingCallback, this, std::placeholders::_1));
 
     // Run loop on it's own thread
     thread_ = std::thread(std::bind(&OpencvCamNode::loop, this));
@@ -580,21 +579,18 @@ void OpencvCamNode::handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp) {
     }
 }
 
-bool OpencvCamNode::recordVideoCallback(
-    const std::shared_ptr<messages_88::srv::RecordVideo::Request> req,
-    std::shared_ptr<messages_88::srv::RecordVideo::Response> resp) {
-    bool success;
+void OpencvCamNode::triggerRecordingCallback(
+    const opencv_cam_msgs::msg::TriggerRecording::SharedPtr msg) {
 
-    if (req->start)
-        success = startRecording(req->filename);
+    if (msg->start)
+        startRecording(msg->data_directory);
     else
-        success = stopRecording();
-
-    resp->success = success;
-    return success;
+        stopRecording();
 }
 
-bool OpencvCamNode::startRecording(const std::string &filename) {
+bool OpencvCamNode::startRecording(const std::string data_directory) {
+    std::string filename = data_directory + "/" + camera_name_ + "_" + get_time_str() + ".mp4";
+
     if (recording_) {
         RCLCPP_WARN(this->get_logger(), "Already recording!");
         return false;
@@ -755,6 +751,16 @@ void OpencvCamNode::writerLoop() {
         rate.sleep();
     }
 }
+
+std::string OpencvCamNode::get_time_str() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm now_tm = *std::gmtime(&now_time);
+    std::stringstream ss;
+    ss << std::put_time(&now_tm, "%Y-%m-%d_%H-%M-%S");
+    return ss.str();
+}
+
 } // namespace opencv_cam
 
 #include "rclcpp_components/register_node_macro.hpp"

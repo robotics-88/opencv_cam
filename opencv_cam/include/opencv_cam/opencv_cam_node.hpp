@@ -4,8 +4,8 @@
 #include <fstream>
 #include <queue>
 
-#include "messages_88/srv/record_video.hpp"
 #include "opencv2/highgui/highgui.hpp"
+#include "opencv_cam_msgs/msg/trigger_recording.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/image.hpp"
@@ -27,6 +27,7 @@ class OpencvCamNode : public rclcpp::Node {
     std::shared_ptr<cv::VideoCapture> capture_;
     sensor_msgs::msg::CameraInfo camera_info_msg_;
 
+    std::string camera_name_;
     int publish_fps_;
     double device_fps_;
     rclcpp::Time next_stamp_;
@@ -47,7 +48,7 @@ class OpencvCamNode : public rclcpp::Node {
         rectified_image_pub_; // for fisheye rectification
     rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr meas_fps_pub_;
-    rclcpp::Service<messages_88::srv::RecordVideo>::SharedPtr record_service_;
+    rclcpp::Subscription<opencv_cam_msgs::msg::TriggerRecording>::SharedPtr trigger_recording_sub_;
 
     rclcpp::TimerBase::SharedPtr meas_fps_timer_;
     rclcpp::TimerBase::SharedPtr record_timer_;
@@ -88,15 +89,15 @@ class OpencvCamNode : public rclcpp::Node {
     void initFisheyeUndistortMaps();
     bool SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat *IRImageCU83, cv::Mat *RGBImageCU83,
                                 int *RGBBufferSizeCU83, int *IRBufferSizeCU83);
+    std::string get_time_str();
 
     void handleSee3CamFrame(cv::Mat &frame, rclcpp::Time stamp);
     void handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp);
     void writeToPoseFile();
     void writeVideo();
 
-    bool recordVideoCallback(const std::shared_ptr<messages_88::srv::RecordVideo::Request> req,
-                             std::shared_ptr<messages_88::srv::RecordVideo::Response> resp);
-    bool startRecording(const std::string &filename);
+    void triggerRecordingCallback(const opencv_cam_msgs::msg::TriggerRecording::SharedPtr msg);
+    bool startRecording(const std::string data_directory);
 
     void loop();
     void writerLoop();
