@@ -5,11 +5,11 @@
 #include <queue>
 
 #include "opencv2/highgui/highgui.hpp"
-#include "opencv_cam_msgs/msg/trigger_recording.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/camera_info.hpp"
 #include "sensor_msgs/msg/image.hpp"
 #include "std_msgs/msg/float32.hpp"
+#include "std_msgs/msg/string.hpp"
 #include <opencv2/imgproc.hpp>
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
@@ -48,7 +48,7 @@ class OpencvCamNode : public rclcpp::Node {
         rectified_image_pub_; // for fisheye rectification
     rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr camera_info_pub_;
     rclcpp::Publisher<std_msgs::msg::Float32>::SharedPtr meas_fps_pub_;
-    rclcpp::Subscription<opencv_cam_msgs::msg::TriggerRecording>::SharedPtr trigger_recording_sub_;
+    rclcpp::Subscription<std_msgs::msg::String>::SharedPtr trigger_recording_sub_;
 
     rclcpp::TimerBase::SharedPtr meas_fps_timer_;
     rclcpp::TimerBase::SharedPtr record_timer_;
@@ -96,7 +96,7 @@ class OpencvCamNode : public rclcpp::Node {
     void writeToPoseFile();
     void writeVideo();
 
-    void triggerRecordingCallback(const opencv_cam_msgs::msg::TriggerRecording::SharedPtr msg);
+    void triggerRecordingCallback(const std_msgs::msg::String::SharedPtr msg);
     bool startRecording(const std::string data_directory);
 
     void loop();

@@ -252,7 +252,7 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
     rectified_image_pub_ = create_publisher<sensor_msgs::msg::Image>("image_rect", 10);
 
     // Video recorder service
-    trigger_recording_sub_ = this->create_subscription<opencv_cam_msgs::msg::TriggerRecording>(
+    trigger_recording_sub_ = this->create_subscription<std_msgs::msg::String>(
         "/trigger_recording", 10,
         std::bind(&OpencvCamNode::triggerRecordingCallback, this, std::placeholders::_1));
 
@@ -574,11 +574,10 @@ void OpencvCamNode::handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp) {
     }
 }
 
-void OpencvCamNode::triggerRecordingCallback(
-    const opencv_cam_msgs::msg::TriggerRecording::SharedPtr msg) {
+void OpencvCamNode::triggerRecordingCallback(const std_msgs::msg::String::SharedPtr msg) {
 
-    if (msg->start)
-        startRecording(msg->data_directory);
+    if (!msg->data.empty())
+        startRecording(msg->data);
     else
         stopRecording();
 }

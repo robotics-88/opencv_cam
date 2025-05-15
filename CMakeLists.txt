@@ -23,7 +23,6 @@ find_package(rclcpp_components REQUIRED)
 find_package(ros2_shared REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
-find_package(opencv_cam_msgs REQUIRED)
 
 
 # Package includes not needed for CMake >= 2.8.11
@@ -56,7 +55,6 @@ ament_target_dependencies(
   rclcpp_components
   sensor_msgs
   ros2_shared
-  opencv_cam_msgs
   tf2_ros
 )
 rclcpp_components_register_nodes(opencv_cam_node "opencv_cam::OpencvCamNode")
