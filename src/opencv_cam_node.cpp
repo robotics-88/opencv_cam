@@ -20,7 +20,13 @@ std::string get_gstreamer_pipeline(const std::string &filename) {
     std::string home = std::getenv("HOME");
     std::string path = home + "/r88_public/device-tree/model";
     std::ifstream model_file(path);
-    std::string pipeline;
+
+    std::string pipeline =
+        "appsrc ! videoconvert ! x264enc speed-preset=ultrafast tune=zerolatency "
+        "! h264parse ! mp4mux ! filesink location=" +
+        filename;
+
+    // If model file includes jetson AGX or Orin, use hardware encoding
     if (model_file.is_open()) {
         std::string model;
         std::getline(model_file, model);
@@ -28,26 +34,16 @@ std::string get_gstreamer_pipeline(const std::string &filename) {
         if (model.find("Orin") != std::string::npos ||
             model.find("Jetson AGX") != std::string::npos) {
             std::cout << "OpenCV_Cam using hardware encoding for Orin/Jetson AGX" << std::endl;
-        }
-        // TODO figure out why Nano doesnt have the above encoder, it should be the same as NX
-        // else if (model.find("Jetson Nano") != std::string::npos) {
-        //   std::cout << "OpenCV_Cam using hardware encoding for Jetson Nano" << std::endl;
-        //   encoder = "nvv4l2h264enc";
-        // }
 
-        pipeline =
-            "appsrc ! videoconvert ! nvvidconv ! nvv4l2h264enc preset-level=1 insert-sps-pps=true "
-            "! h264parse ! mp4mux ! filesink location=" +
-            filename;
-    } else {
-        pipeline = "appsrc ! videoconvert ! x264enc speed-preset=ultrafast tune=zerolatency "
-                   "! h264parse ! mp4mux ! filesink location=" +
-                   filename;
+            pipeline = "appsrc ! videoconvert ! nvvidconv ! nvv4l2h264enc preset-level=1 "
+                       "insert-sps-pps=true "
+                       "! h264parse ! mp4mux ! filesink location=" +
+                       filename;
+        }
     }
 
     return pipeline;
 }
-
 // Utility: Determine camera pixel format using v4l2-ctl
 std::string get_camera_pixel_format(const std::string &device) {
     std::string cmd = "v4l2-ctl --device=" + device + " --get-fmt-video 2>&1";
@@ -139,7 +135,8 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
 #define CXT_MACRO_MEMBER(n, t, d) CXT_MACRO_LOAD_PARAMETER((*this), cxt_, n, t, d)
     CXT_MACRO_INIT_PARAMETERS(OPENCV_CAM_ALL_PARAMS, validate_parameters)
 
-    // Register for parameter changed. NOTE at this point nothing is done when parameters change.
+    // Register for parameter changed. NOTE at this point nothing is done when parameters
+    // change.
 #undef CXT_MACRO_MEMBER
 #define CXT_MACRO_MEMBER(n, t, d) CXT_MACRO_PARAMETER_CHANGED(n, t)
     CXT_MACRO_REGISTER_PARAMETERS_CHANGED((*this), cxt_, OPENCV_CAM_ALL_PARAMS, validate_parameters)
@@ -226,10 +223,9 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
     }
 
     assert(!cxt_.camera_info_path_.empty()); // readCalibration will crash if file_name is ""
-    std::string camera_name;
-    if (camera_calibration_parsers::readCalibration(cxt_.camera_info_path_, camera_name,
+    if (camera_calibration_parsers::readCalibration(cxt_.camera_info_path_, camera_name_,
                                                     camera_info_msg_)) {
-        RCLCPP_INFO(get_logger(), "got camera info for '%s'", camera_name.c_str());
+        RCLCPP_INFO(get_logger(), "got camera info for '%s'", camera_name_.c_str());
         camera_info_msg_.header.frame_id = cxt_.camera_frame_id_;
         camera_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("camera_info", 10);
     } else {
@@ -256,9 +252,9 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
     rectified_image_pub_ = create_publisher<sensor_msgs::msg::Image>("image_rect", 10);
 
     // Video recorder service
-    record_service_ = this->create_service<messages_88::srv::RecordVideo>(
-        "~/record", std::bind(&OpencvCamNode::recordVideoCallback, this, std::placeholders::_1,
-                              std::placeholders::_2));
+    trigger_recording_sub_ = this->create_subscription<std_msgs::msg::String>(
+        "/trigger_recording", 10,
+        std::bind(&OpencvCamNode::triggerRecordingCallback, this, std::placeholders::_1));
 
     // Run loop on it's own thread
     thread_ = std::thread(std::bind(&OpencvCamNode::loop, this));
@@ -322,8 +318,8 @@ bool OpencvCamNode::SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat *IRImageCU83,
     int long BuffSize = 3120 * 1080 * 2;
 
     if (true)
-    // if ((Frame.cols == 3120 && Frame.rows == 1080)) // Later bring back handling different dual
-    // images
+    // if ((Frame.cols == 3120 && Frame.rows == 1080)) // Later bring back handling different
+    // dual images
     {
         // int rgbbuffsize = 1920 * 1080 * 2;
         // int irbuffsize = 2592000;
@@ -353,11 +349,9 @@ bool OpencvCamNode::SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat *IRImageCU83,
     // 	{
     // 		if ((RGBIRBuff[Buffcnt] & 0x03) == 0x00)
     // 		{
-    // 			memcpy(RGBImageCU83->data + (RGBBufsize), RGBIRBuff + Buffcnt, 7679);
-    // 			Buffcnt += 7680;
-    // 			RGBBufsize += 7680;
-    // 			size -= 7680;
-    // 			rgbcnt += 1;
+    // 			memcpy(RGBImageCU83->data + (RGBBufsize), RGBIRBuff + Buffcnt,
+    // 7679); 			Buffcnt += 7680; 			RGBBufsize += 7680;
+    // size -= 7680; 			rgbcnt += 1;
     // 		}
     // 		else if ((RGBIRBuff[Buffcnt] & 0x03) == 0x03)
     // 		{
@@ -580,21 +574,17 @@ void OpencvCamNode::handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp) {
     }
 }
 
-bool OpencvCamNode::recordVideoCallback(
-    const std::shared_ptr<messages_88::srv::RecordVideo::Request> req,
-    std::shared_ptr<messages_88::srv::RecordVideo::Response> resp) {
-    bool success;
+void OpencvCamNode::triggerRecordingCallback(const std_msgs::msg::String::SharedPtr msg) {
 
-    if (req->start)
-        success = startRecording(req->filename);
+    if (!msg->data.empty())
+        startRecording(msg->data);
     else
-        success = stopRecording();
-
-    resp->success = success;
-    return success;
+        stopRecording();
 }
 
-bool OpencvCamNode::startRecording(const std::string &filename) {
+bool OpencvCamNode::startRecording(const std::string data_directory) {
+    std::string filename = data_directory + "/" + camera_name_ + "_" + get_time_str() + ".mp4";
+
     if (recording_) {
         RCLCPP_WARN(this->get_logger(), "Already recording!");
         return false;
@@ -755,6 +745,16 @@ void OpencvCamNode::writerLoop() {
         rate.sleep();
     }
 }
+
+std::string OpencvCamNode::get_time_str() {
+    auto now = std::chrono::system_clock::now();
+    std::time_t now_time = std::chrono::system_clock::to_time_t(now);
+    std::tm now_tm = *std::gmtime(&now_time);
+    std::stringstream ss;
+    ss << std::put_time(&now_tm, "%Y-%m-%d_%H-%M-%S");
+    return ss.str();
+}
+
 } // namespace opencv_cam
 
 #include "rclcpp_components/register_node_macro.hpp"

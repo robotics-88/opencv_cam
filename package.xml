@@ -23,7 +23,6 @@
     <depend>rclcpp</depend>
     <depend>ros2_shared</depend>
     <depend>sensor_msgs</depend>
-    <depend>messages_88</depend>
     <depend>tf2_ros</depend>
 
     <export>
