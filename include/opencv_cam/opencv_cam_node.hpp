@@ -14,12 +14,26 @@
 #include <tf2_ros/buffer.h>
 #include <tf2_ros/transform_listener.h>
 
-#include "opencv_cam/camera_context.hpp"
-
 namespace opencv_cam {
 
 class OpencvCamNode : public rclcpp::Node {
-    CameraContext cxt_;
+  public:
+    explicit OpencvCamNode(const rclcpp::NodeOptions &options);
+
+    ~OpencvCamNode() override;
+
+    bool stopRecording();
+
+  private:
+    // Parameters
+    bool file_;                    /* Read from file vs. read from device */
+    std::string filename_;         /* Filename */
+    int fps_;                      /* Desired frames per second */
+    std::string device_;           /* Device name e.g. /dev/video0 */
+    int width_;                    /* Device width */
+    int height_;                   /* Device height */
+    std::string camera_info_path_; /* Camera info path */
+    std::string camera_frame_id_;  /* Camera frame id */
 
     std::thread thread_;
     std::atomic<bool> canceled_;
@@ -77,15 +91,6 @@ class OpencvCamNode : public rclcpp::Node {
 
     std::mutex frame_mutex_;
 
-  public:
-    explicit OpencvCamNode(const rclcpp::NodeOptions &options);
-
-    ~OpencvCamNode() override;
-
-    bool stopRecording();
-
-  private:
-    void validate_parameters();
     void initFisheyeUndistortMaps();
     bool SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat *IRImageCU83, cv::Mat *RGBImageCU83,
                                 int *RGBBufferSizeCU83, int *IRBufferSizeCU83);

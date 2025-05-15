@@ -20,7 +20,6 @@ find_package(camera_calibration_parsers REQUIRED)
 find_package(class_loader REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_components REQUIRED)
-find_package(ros2_shared REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
 
@@ -28,7 +27,6 @@ find_package(tf2_ros REQUIRED)
 # Package includes not needed for CMake >= 2.8.11
 include_directories(
   include
-  ${ros2_shared_INCLUDE_DIRS}
 )
 
 # Create ament index resource which references the libraries in the binary dir
@@ -54,7 +52,6 @@ ament_target_dependencies(
   rclcpp
   rclcpp_components
   sensor_msgs
-  ros2_shared
   tf2_ros
 )
 rclcpp_components_register_nodes(opencv_cam_node "opencv_cam::OpencvCamNode")
