@@ -246,9 +246,6 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
     }
 
     image_pub_ = create_publisher<sensor_msgs::msg::Image>("image_raw", 10);
-    if (see3cam_flag_) {
-        image_ir_pub_ = create_publisher<sensor_msgs::msg::Image>("image_ir_raw", 10);
-    }
     rectified_image_pub_ = create_publisher<sensor_msgs::msg::Image>("image_rect", 10);
 
     // Video recorder service
@@ -274,9 +271,6 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
         meas_fps_pub_->publish(msg);
         last_frame_count_ = frame_count_;
     });
-
-    // record_timer_ = create_wall_timer(std::chrono::duration<double>(1.0 / device_fps_),
-    // std::bind(&OpencvCamNode::writeVideo, this));
 }
 
 OpencvCamNode::~OpencvCamNode() {
@@ -298,92 +292,6 @@ void OpencvCamNode::initFisheyeUndistortMaps() {
     }
 }
 
-bool OpencvCamNode::SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat *IRImageCU83,
-                                           cv::Mat *RGBImageCU83, int *RGBBufferSizeCU83,
-                                           int *IRBufferSizeCU83) {
-    uchar *RGBIRBuff = frame.data;
-    // int long size = Frame.cols*Frame.rows * 2;
-
-    int Buffcnt = 0;
-    int cnt = 0;
-    int RGBBufsize = 0;
-    // Changed the datatype from UINT32 to uint32_t - commented by Sushanth
-    // Reason - compatible for both linux & windows
-    uint32_t IrBufsize = 0;
-    int rgbcnt = 0, Ircnt = 0;
-    BYTE *IRBuff = NULL;
-    IRBuff = (BYTE *)malloc(1920 * 1080 * 2);
-    int long BuffSize = 3120 * 1080 * 2;
-
-    if (true)
-    // if ((Frame.cols == 3120 && Frame.rows == 1080)) // Later bring back handling different
-    // dual images
-    {
-        // int rgbbuffsize = 1920 * 1080 * 2;
-        // int irbuffsize = 2592000;
-
-        while (BuffSize > 0) {
-            if ((RGBIRBuff[Buffcnt] & 0x03) == 0x00) {
-                memcpy(RGBImageCU83->data + (RGBBufsize), RGBIRBuff + Buffcnt, 3839);
-                Buffcnt += 3840;
-                RGBBufsize += 3840;
-                BuffSize -= 3840;
-                rgbcnt += 1;
-            } else if ((RGBIRBuff[Buffcnt] & 0x03) == 0x03) {
-                memcpy(IRBuff + (IrBufsize), RGBIRBuff + Buffcnt, 2399);
-                IrBufsize += 2400;
-                Buffcnt += 2400;
-                BuffSize -= 2400;
-                Ircnt += 1;
-            } else {
-                return 1;
-            }
-            cnt++;
-        }
-    }
-    // else
-    // {
-    // 	while (size > 0)
-    // 	{
-    // 		if ((RGBIRBuff[Buffcnt] & 0x03) == 0x00)
-    // 		{
-    // 			memcpy(RGBImageCU83->data + (RGBBufsize), RGBIRBuff + Buffcnt,
-    // 7679); 			Buffcnt += 7680; 			RGBBufsize += 7680;
-    // size -= 7680; 			rgbcnt += 1;
-    // 		}
-    // 		else if ((RGBIRBuff[Buffcnt] & 0x03) == 0x03)
-    // 		{
-    // 			memcpy(IRBuff + (IrBufsize), RGBIRBuff + Buffcnt, 2399);
-    // 			IrBufsize += 2400;
-    // 			Buffcnt += 2400;
-    // 			size -= 2400;
-    // 			Ircnt += 1;
-    // 		}
-    // 		else
-    // 		{
-    // 			return 0;
-    // 		}
-    // 		cnt++;
-    // 	}
-    // }
-
-    int bufsize_IR = 0;
-    Buffcnt = 0;
-    while (IrBufsize > 0) {
-        memcpy(IRImageCU83->data + (bufsize_IR), IRBuff + Buffcnt, 4);
-        bufsize_IR += 4;
-        Buffcnt += 5;
-        IrBufsize -= 5;
-    }
-    Buffcnt = 0;
-
-    *RGBBufferSizeCU83 = RGBBufsize;
-    *IRBufferSizeCU83 = IrBufsize;
-    free(IRBuff);
-    // IRBuff = NULL; //Added by Sushanth - Assigning IRBuff to NULL when it is freed.
-    return 1;
-}
-
 void OpencvCamNode::loop() {
     cv::Mat frame;
 
@@ -396,14 +304,7 @@ void OpencvCamNode::loop() {
 
         auto stamp = now();
 
-        if (see3cam_flag_) {
-            handleSee3CamFrame(frame, stamp);
-        } else {
-            handleGenericFrame(frame, stamp);
-        }
-
-        // Increment frame count after processing
-        frame_count_++;
+        handleFrame(frame, stamp);
 
         // Sleep if required
         if (file_) {
@@ -418,69 +319,8 @@ void OpencvCamNode::loop() {
     }
 }
 
-void OpencvCamNode::handleSee3CamFrame(cv::Mat &frame, rclcpp::Time stamp) {
-    // separate dual image RGB/IR
-    cv::Mat RGBImageCU83 = cv::Mat(1080, 1920, CV_8UC2); // allocation
-    cv::Mat IRImageCU83 = cv::Mat(1080, 1920, CV_8UC1);
-    int RGBBufferSizeCU83, IRBufferSizeCU83 = 0;
-    cv::Mat ResultImage;
-    if (SeparatingRGBIRBuffers(frame, &IRImageCU83, &RGBImageCU83, &RGBBufferSizeCU83,
-                               &IRBufferSizeCU83)) {
-        std::lock_guard<std::mutex> lock(frame_mutex_);
-        if (!RGBImageCU83.empty()) {
-            cvtColor(RGBImageCU83, ResultImage, cv::COLOR_YUV2BGR_UYVY);
+void OpencvCamNode::handleFrame(cv::Mat &frame, rclcpp::Time stamp) {
 
-            // Avoid copying image message if possible
-            sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
-
-            // Convert OpenCV Mat to ROS Image
-            image_msg->header.stamp = stamp;
-            image_msg->header.frame_id = camera_frame_id_;
-            image_msg->height = ResultImage.rows;
-            image_msg->width = ResultImage.cols;
-            image_msg->encoding = sensor_msgs::image_encodings::BGR8;
-            image_msg->is_bigendian = false;
-            image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(ResultImage.step);
-            image_msg->data.assign(ResultImage.datastart, ResultImage.dataend);
-            image_pub_->publish(std::move(image_msg));
-
-            if (last_frame_.empty() || last_frame_.size != ResultImage.size ||
-                last_frame_.type() != ResultImage.type()) {
-                last_frame_ = ResultImage.clone();
-            } else {
-                ResultImage.copyTo(last_frame_);
-            }
-        }
-        if (!IRImageCU83.empty()) {
-            // Avoid copying image message if possible
-            sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
-
-            // Convert OpenCV Mat to ROS Image
-            image_msg->header.stamp = stamp;
-            image_msg->header.frame_id = camera_frame_id_;
-            image_msg->height = IRImageCU83.rows;
-            image_msg->width = IRImageCU83.cols;
-            image_msg->encoding = sensor_msgs::image_encodings::MONO8;
-            image_msg->is_bigendian = false;
-            image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(IRImageCU83.step);
-            image_msg->data.assign(IRImageCU83.datastart, IRImageCU83.dataend);
-            image_ir_pub_->publish(std::move(image_msg));
-
-            if (last_ir_frame_.empty() || last_ir_frame_.size != ResultImage.size ||
-                last_ir_frame_.type() != ResultImage.type()) {
-                last_ir_frame_ = IRImageCU83.clone();
-            } else {
-                IRImageCU83.copyTo(last_ir_frame_);
-            }
-        }
-    } else {
-        std::cout << "SeparatingRGBIRBuffers failed" << std::endl;
-    }
-}
-
-void OpencvCamNode::handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp) {
-
-    std::lock_guard<std::mutex> lock(frame_mutex_);
     // Avoid copying image message if possible
     sensor_msgs::msg::Image::UniquePtr image_msg(new sensor_msgs::msg::Image());
 
@@ -507,6 +347,8 @@ void OpencvCamNode::handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp) {
         camera_info_msg_.header.stamp = stamp;
         camera_info_pub_->publish(camera_info_msg_);
     }
+
+    cv::Mat rec_frame;
     if (camera_info_msg_.distortion_model == "fisheye") {
         cv::Mat undistorted;
         cv::remap(frame, undistorted, map1_, map2_, cv::INTER_LINEAR);
@@ -514,7 +356,7 @@ void OpencvCamNode::handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp) {
         cv::Point2f center(undistorted.cols / 2.0, undistorted.rows / 2.0);
         cv::Mat rotation_matrix = cv::getRotationMatrix2D(center, 180, 1.0);
         cv::warpAffine(undistorted, rotated_image, rotation_matrix, undistorted.size());
-        last_rect_frame_ = rotated_image.clone();
+        rec_frame = rotated_image.clone();
 
         sensor_msgs::msg::Image::UniquePtr rectified_msg(new sensor_msgs::msg::Image());
         rectified_msg->header.stamp = stamp;
@@ -526,36 +368,21 @@ void OpencvCamNode::handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp) {
         rectified_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(rotated_image.step);
         rectified_msg->data.assign(rotated_image.datastart, rotated_image.dataend);
         rectified_image_pub_->publish(std::move(rectified_msg));
-    }
-
-    // if (last_frame_.empty() || last_frame_.size != frame.size || last_frame_.type() !=
-    // frame.type()) {
-    //   last_frame_ = frame.clone();
-    // }
-    // else {
-    //   frame.copyTo(last_frame_);
-    // }
-
-    cv::Mat bgr_frame;
-    if (camera_info_msg_.distortion_model == "fisheye") {
-        if (frame.channels() == 1) {
-            cv::cvtColor(last_rect_frame_, bgr_frame, cv::COLOR_GRAY2BGR);
-        } else if (frame.channels() == 4) {
-            cv::cvtColor(last_rect_frame_, bgr_frame, cv::COLOR_BGRA2BGR);
-        } else {
-            bgr_frame = last_rect_frame_; // Assume already BGR
-        }
     } else {
-        if (frame.channels() == 1) {
-            cv::cvtColor(frame, bgr_frame, cv::COLOR_GRAY2BGR);
-        } else if (frame.channels() == 4) {
-            cv::cvtColor(frame, bgr_frame, cv::COLOR_BGRA2BGR);
-        } else {
-            bgr_frame = frame; // Assume already BGR
-        }
+        rec_frame = frame.clone();
     }
 
     if (recording_) {
+
+        cv::Mat bgr_frame;
+        if (frame.channels() == 1) {
+            cv::cvtColor(rec_frame, bgr_frame, cv::COLOR_GRAY2BGR);
+        } else if (frame.channels() == 4) {
+            cv::cvtColor(rec_frame, bgr_frame, cv::COLOR_BGRA2BGR);
+        } else {
+            bgr_frame = rec_frame.clone(); // Assume already BGR
+        }
+
         // Add the frame to the queue
         std::lock_guard<std::mutex> lock(writer_mutex_);
         if (frame_queue_.size() < 100) {
@@ -564,6 +391,9 @@ void OpencvCamNode::handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp) {
             RCLCPP_WARN(this->get_logger(), "Frame queue full, dropping frame");
         }
     }
+
+    // Increment frame count after processing
+    frame_count_++;
 }
 
 void OpencvCamNode::triggerRecordingCallback(const std_msgs::msg::String::SharedPtr msg) {
@@ -582,14 +412,6 @@ bool OpencvCamNode::startRecording(const std::string data_directory) {
         return false;
     }
 
-    // If see3cam, split into two 1920 width images.
-    int width;
-    if (see3cam_flag_) {
-        width = 1920;
-    } else {
-        width = width_;
-    }
-
     std::string pipeline = get_gstreamer_pipeline(filename);
     bool use_pipeline = (pipeline != filename);
 
@@ -600,30 +422,13 @@ bool OpencvCamNode::startRecording(const std::string data_directory) {
     }
 
     video_writer_.open(pipeline, use_pipeline ? cv::CAP_GSTREAMER : 0, device_fps_,
-                       cv::Size(width, height_), true);
+                       cv::Size(width_, height_), true);
 
     if (!video_writer_.isOpened()) {
         RCLCPP_ERROR(this->get_logger(), "Failed to open video file for writing.");
         return false;
     } else {
         RCLCPP_INFO(this->get_logger(), "Started recording to %s", filename.c_str());
-    }
-
-    // If see3cam_flag_ set, open a second video writer for the IR image
-    if (see3cam_flag_) {
-        std::string filename_ir = filename.substr(0, filename.find_last_of(".")) + "_ir.mp4";
-        std::string pipeline_ir = get_gstreamer_pipeline(filename_ir);
-        bool use_pipeline_ir = (pipeline_ir != filename_ir);
-
-        video_writer_ir_.open(pipeline_ir, use_pipeline_ir ? cv::CAP_GSTREAMER : 0, device_fps_,
-                              cv::Size(width, height_), false);
-
-        if (!video_writer_ir_.isOpened()) {
-            RCLCPP_ERROR(this->get_logger(), "Failed to open video file for writing.");
-            return false;
-        } else {
-            RCLCPP_INFO(this->get_logger(), "Started recording to %s", filename_ir.c_str());
-        }
     }
 
     recording_ = true;
@@ -692,26 +497,6 @@ void OpencvCamNode::writeToPoseFile() {
                    << transform_stamped.transform.translation.z << " ";
         pose_file_ << std::to_string(camera_id) << " " << image_name << "\n";
         pose_file_ << "\n"; // Leave blank line between frames
-    }
-}
-
-void OpencvCamNode::writeVideo() {
-    std::lock_guard<std::mutex> lock(frame_mutex_);
-    if (recording_) {
-
-        // TODO: determine why see3cam write takes so long and therefore causes delays.
-        if (video_writer_.isOpened()) {
-            if (camera_info_msg_.distortion_model == "fisheye") {
-                video_writer_.write(last_rect_frame_);
-            } else {
-                video_writer_.write(last_frame_);
-            }
-        }
-        if (video_writer_ir_.isOpened()) {
-            video_writer_ir_.write(last_ir_frame_);
-        }
-        // writeToPoseFile();
-        written_frame_count_++;
     }
 }
 
