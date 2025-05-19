@@ -124,55 +124,56 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
       recording_(false),
       frame_count_(0),
       written_frame_count_(0),
-      canceled_(false) {
+      canceled_(false),
+      file_(false),
+      filename_(""),
+      fps_(0),
+      device_(""),
+      width_(0),
+      height_(0),
+      camera_info_path_(""),
+      camera_frame_id_("") {
+
     tf_buffer_ = std::make_unique<tf2_ros::Buffer>(this->get_clock());
     tf_listener_ = std::make_shared<tf2_ros::TransformListener>(*tf_buffer_);
 
-    RCLCPP_INFO(get_logger(), "use_intra_process_comms=%d", options.use_intra_process_comms());
+    this->declare_parameter("file", file_);
+    this->declare_parameter("filename", filename_);
+    this->declare_parameter("fps", fps_);
+    this->declare_parameter("device", device_);
+    this->declare_parameter("width", width_);
+    this->declare_parameter("height", height_);
+    this->declare_parameter("camera_info_path", camera_info_path_);
+    this->declare_parameter("camera_frame_id", camera_frame_id_);
 
-    // Initialize parameters
-#undef CXT_MACRO_MEMBER
-#define CXT_MACRO_MEMBER(n, t, d) CXT_MACRO_LOAD_PARAMETER((*this), cxt_, n, t, d)
-    CXT_MACRO_INIT_PARAMETERS(OPENCV_CAM_ALL_PARAMS, validate_parameters)
-
-    // Register for parameter changed. NOTE at this point nothing is done when parameters
-    // change.
-#undef CXT_MACRO_MEMBER
-#define CXT_MACRO_MEMBER(n, t, d) CXT_MACRO_PARAMETER_CHANGED(n, t)
-    CXT_MACRO_REGISTER_PARAMETERS_CHANGED((*this), cxt_, OPENCV_CAM_ALL_PARAMS, validate_parameters)
-
-    // Log the current parameters
-#undef CXT_MACRO_MEMBER
-#define CXT_MACRO_MEMBER(n, t, d) CXT_MACRO_LOG_SORTED_PARAMETER(cxt_, n, t, d)
-    CXT_MACRO_LOG_SORTED_PARAMETERS(RCLCPP_INFO, get_logger(), "opencv_cam Parameters",
-                                    OPENCV_CAM_ALL_PARAMS)
-
-    // Check that all command line parameters are registered
-#undef CXT_MACRO_MEMBER
-#define CXT_MACRO_MEMBER(n, t, d) CXT_MACRO_CHECK_CMDLINE_PARAMETER(n, t, d)
-    CXT_MACRO_CHECK_CMDLINE_PARAMETERS((*this), OPENCV_CAM_ALL_PARAMS)
-
-    RCLCPP_INFO(get_logger(), "OpenCV version %d", CV_VERSION_MAJOR);
+    this->get_parameter("file", file_);
+    this->get_parameter("filename", filename_);
+    this->get_parameter("fps", fps_);
+    this->get_parameter("device", device_);
+    this->get_parameter("width", width_);
+    this->get_parameter("height", height_);
+    this->get_parameter("camera_info_path", camera_info_path_);
+    this->get_parameter("camera_frame_id", camera_frame_id_);
 
     // Check if see3cam camera is used
-    if (cxt_.camera_frame_id_.find("see3") != std::string::npos) {
+    if (camera_frame_id_.find("see3") != std::string::npos) {
         see3cam_flag_ = true;
     } else {
         see3cam_flag_ = false;
     }
 
     // Open file or device
-    if (cxt_.file_) {
-        capture_ = std::make_shared<cv::VideoCapture>(cxt_.filename_);
+    if (file_) {
+        capture_ = std::make_shared<cv::VideoCapture>(filename_);
 
         if (!capture_->isOpened()) {
-            RCLCPP_ERROR(get_logger(), "cannot open file %s", cxt_.filename_.c_str());
+            RCLCPP_ERROR(get_logger(), "Cannot open file %s", filename_.c_str());
             return;
         }
 
-        if (cxt_.fps_ > 0) {
+        if (fps_ > 0) {
             // Publish at the specified rate
-            publish_fps_ = cxt_.fps_;
+            publish_fps_ = fps_;
         } else {
             // Publish at the recorded rate
             publish_fps_ = static_cast<int>(capture_->get(cv::CAP_PROP_FPS));
@@ -180,14 +181,13 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
 
         double width = capture_->get(cv::CAP_PROP_FRAME_WIDTH);
         double height = capture_->get(cv::CAP_PROP_FRAME_HEIGHT);
-        RCLCPP_INFO(get_logger(), "file %s open, width %g, height %g, publish fps %d",
-                    cxt_.filename_.c_str(), width, height, publish_fps_);
+        RCLCPP_INFO(get_logger(), "File %s open, width %g, height %g, publish fps %d",
+                    filename_.c_str(), width, height, publish_fps_);
 
         next_stamp_ = now();
 
     } else {
-        std::string pipeline =
-            get_capture_pipeline(cxt_.device_, cxt_.width_, cxt_.height_, cxt_.fps_);
+        std::string pipeline = get_capture_pipeline(device_, width_, height_, fps_);
         capture_ = std::make_shared<cv::VideoCapture>(pipeline, cv::CAP_GSTREAMER);
         if (see3cam_flag_) {
             capture_->set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y', '1', '6', ' '));
@@ -195,20 +195,20 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
         }
 
         if (!capture_->isOpened()) {
-            RCLCPP_ERROR(get_logger(), "cannot open device %s", cxt_.device_.c_str());
+            RCLCPP_ERROR(get_logger(), "cannot open device %s", device_.c_str());
             return;
         }
 
-        if (cxt_.height_ > 0) {
-            capture_->set(cv::CAP_PROP_FRAME_HEIGHT, cxt_.height_);
+        if (height_ > 0) {
+            capture_->set(cv::CAP_PROP_FRAME_HEIGHT, height_);
         }
 
-        if (cxt_.width_ > 0) {
-            capture_->set(cv::CAP_PROP_FRAME_WIDTH, cxt_.width_);
+        if (width_ > 0) {
+            capture_->set(cv::CAP_PROP_FRAME_WIDTH, width_);
         }
 
-        if (cxt_.fps_ > 0) {
-            capture_->set(cv::CAP_PROP_FPS, cxt_.fps_);
+        if (fps_ > 0) {
+            capture_->set(cv::CAP_PROP_FPS, fps_);
         } else {
             RCLCPP_ERROR(get_logger(), "fps not set, not starting node");
             return;
@@ -218,18 +218,18 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
         double height = capture_->get(cv::CAP_PROP_FRAME_HEIGHT);
         device_fps_ = capture_->get(cv::CAP_PROP_FPS);
 
-        RCLCPP_INFO(get_logger(), "device %d open, width %g, height %g, device fps %g", cxt_.index_,
+        RCLCPP_INFO(get_logger(), "Device %s open, width %g, height %g, fps %g", device_.c_str(),
                     width, height, device_fps_);
     }
 
-    assert(!cxt_.camera_info_path_.empty()); // readCalibration will crash if file_name is ""
-    if (camera_calibration_parsers::readCalibration(cxt_.camera_info_path_, camera_name_,
+    assert(!camera_info_path_.empty()); // readCalibration will crash if file_name is ""
+    if (camera_calibration_parsers::readCalibration(camera_info_path_, camera_name_,
                                                     camera_info_msg_)) {
-        RCLCPP_INFO(get_logger(), "got camera info for '%s'", camera_name_.c_str());
-        camera_info_msg_.header.frame_id = cxt_.camera_frame_id_;
+        RCLCPP_INFO(get_logger(), "Got camera info for '%s'", camera_name_.c_str());
+        camera_info_msg_.header.frame_id = camera_frame_id_;
         camera_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>("camera_info", 10);
     } else {
-        RCLCPP_ERROR(get_logger(), "cannot get camera info, will not publish");
+        RCLCPP_ERROR(get_logger(), "Cannot get camera info, will not publish");
         camera_info_pub_ = nullptr;
     }
 
@@ -286,8 +286,6 @@ OpencvCamNode::~OpencvCamNode() {
         thread_.join();
     }
 }
-
-void OpencvCamNode::validate_parameters() {}
 
 void OpencvCamNode::initFisheyeUndistortMaps() {
     if (!fisheye_maps_initialized_ && camera_info_msg_.distortion_model == "fisheye") {
@@ -408,7 +406,7 @@ void OpencvCamNode::loop() {
         frame_count_++;
 
         // Sleep if required
-        if (cxt_.file_) {
+        if (file_) {
             using namespace std::chrono_literals;
             next_stamp_ = next_stamp_ + rclcpp::Duration{1000000000ns / publish_fps_};
             auto wait = next_stamp_ - stamp;
@@ -437,7 +435,7 @@ void OpencvCamNode::handleSee3CamFrame(cv::Mat &frame, rclcpp::Time stamp) {
 
             // Convert OpenCV Mat to ROS Image
             image_msg->header.stamp = stamp;
-            image_msg->header.frame_id = cxt_.camera_frame_id_;
+            image_msg->header.frame_id = camera_frame_id_;
             image_msg->height = ResultImage.rows;
             image_msg->width = ResultImage.cols;
             image_msg->encoding = sensor_msgs::image_encodings::BGR8;
@@ -459,7 +457,7 @@ void OpencvCamNode::handleSee3CamFrame(cv::Mat &frame, rclcpp::Time stamp) {
 
             // Convert OpenCV Mat to ROS Image
             image_msg->header.stamp = stamp;
-            image_msg->header.frame_id = cxt_.camera_frame_id_;
+            image_msg->header.frame_id = camera_frame_id_;
             image_msg->height = IRImageCU83.rows;
             image_msg->width = IRImageCU83.cols;
             image_msg->encoding = sensor_msgs::image_encodings::MONO8;
@@ -495,19 +493,13 @@ void OpencvCamNode::handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp) {
 
     // Convert OpenCV Mat to ROS Image
     image_msg->header.stamp = stamp;
-    image_msg->header.frame_id = cxt_.camera_frame_id_;
+    image_msg->header.frame_id = camera_frame_id_;
     image_msg->height = frame.rows;
     image_msg->width = frame.cols;
     image_msg->encoding = mat_type2encoding(frame.type());
     image_msg->is_bigendian = false;
     image_msg->step = static_cast<sensor_msgs::msg::Image::_step_type>(frame.step);
     image_msg->data.assign(frame.datastart, frame.dataend);
-
-#undef SHOW_ADDRESS
-#ifdef SHOW_ADDRESS
-    static int count = 0;
-    RCLCPP_INFO(get_logger(), "%d, %p", count++, reinterpret_cast<std::uintptr_t>(image_msg.get()));
-#endif
 
     // Publish
     image_pub_->publish(std::move(image_msg));
@@ -526,7 +518,7 @@ void OpencvCamNode::handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp) {
 
         sensor_msgs::msg::Image::UniquePtr rectified_msg(new sensor_msgs::msg::Image());
         rectified_msg->header.stamp = stamp;
-        rectified_msg->header.frame_id = cxt_.camera_frame_id_;
+        rectified_msg->header.frame_id = camera_frame_id_;
         rectified_msg->height = rotated_image.rows;
         rectified_msg->width = rotated_image.cols;
         rectified_msg->encoding = mat_type2encoding(rotated_image.type());
@@ -595,7 +587,7 @@ bool OpencvCamNode::startRecording(const std::string data_directory) {
     if (see3cam_flag_) {
         width = 1920;
     } else {
-        width = cxt_.width_;
+        width = width_;
     }
 
     std::string pipeline = get_gstreamer_pipeline(filename);
@@ -608,7 +600,7 @@ bool OpencvCamNode::startRecording(const std::string data_directory) {
     }
 
     video_writer_.open(pipeline, use_pipeline ? cv::CAP_GSTREAMER : 0, device_fps_,
-                       cv::Size(width, cxt_.height_), true);
+                       cv::Size(width, height_), true);
 
     if (!video_writer_.isOpened()) {
         RCLCPP_ERROR(this->get_logger(), "Failed to open video file for writing.");
@@ -624,7 +616,7 @@ bool OpencvCamNode::startRecording(const std::string data_directory) {
         bool use_pipeline_ir = (pipeline_ir != filename_ir);
 
         video_writer_ir_.open(pipeline_ir, use_pipeline_ir ? cv::CAP_GSTREAMER : 0, device_fps_,
-                              cv::Size(width, cxt_.height_), false);
+                              cv::Size(width, height_), false);
 
         if (!video_writer_ir_.isOpened()) {
             RCLCPP_ERROR(this->get_logger(), "Failed to open video file for writing.");
@@ -673,7 +665,7 @@ void OpencvCamNode::writeToPoseFile() {
     geometry_msgs::msg::TransformStamped transform_stamped;
     try {
         transform_stamped =
-            tf_buffer_->lookupTransform(map_frame_, cxt_.camera_frame_id_, tf2::TimePointZero);
+            tf_buffer_->lookupTransform(map_frame_, camera_frame_id_, tf2::TimePointZero);
         rclcpp::Time transform_time(transform_stamped.header.stamp);
         if (now() - transform_time > rclcpp::Duration::from_seconds(0.5)) {
             RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 1000,

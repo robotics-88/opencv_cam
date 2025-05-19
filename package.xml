@@ -21,7 +21,6 @@
     <depend>class_loader</depend>
     <depend>libopencv-dev</depend>
     <depend>rclcpp</depend>
-    <depend>ros2_shared</depend>
     <depend>sensor_msgs</depend>
     <depend>tf2_ros</depend>
 
