@@ -73,10 +73,6 @@ class OpencvCamNode : public rclcpp::Node {
     cv::VideoWriter video_writer_;
     cv::VideoWriter video_writer_ir_;
 
-    cv::Mat last_frame_;
-    cv::Mat last_rect_frame_;
-    cv::Mat last_ir_frame_;
-
     std::string map_frame_;
     std::ofstream pose_file_;
     std::atomic<int> frame_count_;
@@ -89,17 +85,11 @@ class OpencvCamNode : public rclcpp::Node {
     bool stop_writer_thread_ = false;
     std::mutex writer_mutex_;
 
-    std::mutex frame_mutex_;
-
     void initFisheyeUndistortMaps();
-    bool SeparatingRGBIRBuffers(cv::Mat frame, cv::Mat *IRImageCU83, cv::Mat *RGBImageCU83,
-                                int *RGBBufferSizeCU83, int *IRBufferSizeCU83);
     std::string get_time_str();
 
-    void handleSee3CamFrame(cv::Mat &frame, rclcpp::Time stamp);
-    void handleGenericFrame(cv::Mat &frame, rclcpp::Time stamp);
+    void handleFrame(cv::Mat &frame, rclcpp::Time stamp);
     void writeToPoseFile();
-    void writeVideo();
 
     void triggerRecordingCallback(const std_msgs::msg::String::SharedPtr msg);
     bool startRecording(const std::string data_directory);
