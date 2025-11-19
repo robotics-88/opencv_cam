@@ -84,6 +84,7 @@ std::string get_camera_pixel_format(const std::string &device) {
 }
 
 // Utility function to generate fastest capture pipeline based on hardware and camera format
+// Utility function to generate fastest capture pipeline based on hardware and camera format
 std::string get_capture_pipeline(const std::string &device, int width, int height, int fps) {
     std::string home = std::getenv("HOME");
     std::string path = home + "/r88_public/device-tree/model";
@@ -93,24 +94,61 @@ std::string get_capture_pipeline(const std::string &device, int width, int heigh
         std::getline(model_file, model);
     }
 
-    std::string format = get_camera_pixel_format(device);
+    std::string format = get_camera_pixel_format(device);  // e.g. "Y16" or "MJPG"
     std::ostringstream pipeline;
 
-    if (model.find("Orin") != std::string::npos || model.find("Jetson AGX") != std::string::npos ||
-        model.find("Jetson Nano") != std::string::npos) {
-        if (format == "MJPG") {
-            pipeline << "v4l2src device=" << device << " ! image/jpeg, width=" << width
-                     << ", height=" << height << ", framerate=" << fps << "/1 "
-                     << "! jpegdec ! nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! appsink";
+    bool is_jetson =
+        model.find("Orin") != std::string::npos ||
+        model.find("Jetson AGX") != std::string::npos ||
+        model.find("Jetson Nano") != std::string::npos;
+
+    // --- Special case: Attollo Y16 camera ---
+    if (format == "Y16") {
+        // This mirrors your working gst-launch pipeline:
+        // v4l2src device=/dev/attollo !
+        //   video/x-raw,format=GRAY16_LE,width=320,height=256,framerate=366/1 !
+        //   videoconvert ! autovideosink
+        //
+        // For OpenCV we end in BGR + appsink.
+        pipeline << "v4l2src device=" << device
+                 << " ! video/x-raw,format=GRAY16_LE"
+                 << ",width=" << width
+                 << ",height=" << height
+                 << ",framerate=" << fps << "/1 "
+                 << "! videoconvert ! video/x-raw,format=BGR ! appsink";
+
+    } else if (format == "MJPG" || format == "JPEG") {
+        // MJPEG webcam path, with optional Jetson accel
+        if (is_jetson) {
+            pipeline << "v4l2src device=" << device
+                     << " ! image/jpeg, width=" << width
+                     << ", height=" << height
+                     << ", framerate=" << fps << "/1 "
+                     << "! jpegdec ! nvvidconv ! video/x-raw, format=BGRx ! "
+                        "videoconvert ! appsink";
         } else {
-            pipeline << "v4l2src device=" << device << " ! video/x-raw, width=" << width
-                     << ", height=" << height << ", framerate=" << fps << "/1 "
-                     << "! nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! appsink";
+            pipeline << "v4l2src device=" << device
+                     << " ! image/jpeg, width=" << width
+                     << ", height=" << height
+                     << ", framerate=" << fps << "/1 "
+                     << "! jpegdec ! videoconvert ! appsink";
         }
+
     } else {
-        pipeline << "v4l2src device=" << device << " ! image/jpeg, width=" << width
-                 << ", height=" << height << ", framerate=" << fps << "/1 "
-                 << "! jpegdec ! videoconvert ! appsink";
+        // Generic fallback for other raw formats
+        if (is_jetson) {
+            pipeline << "v4l2src device=" << device
+                     << " ! video/x-raw, width=" << width
+                     << ", height=" << height
+                     << ", framerate=" << fps << "/1 "
+                     << "! nvvidconv ! video/x-raw, format=BGRx ! videoconvert ! appsink";
+        } else {
+            pipeline << "v4l2src device=" << device
+                     << " ! video/x-raw, width=" << width
+                     << ", height=" << height
+                     << ", framerate=" << fps << "/1 "
+                     << "! videoconvert ! video/x-raw,format=BGR ! appsink";
+        }
     }
 
     std::cout << "Final GStreamer pipeline: " << pipeline.str() << std::endl;
