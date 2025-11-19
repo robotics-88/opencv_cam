@@ -44,12 +44,22 @@ std::string get_gstreamer_pipeline(const std::string &filename) {
 
     return pipeline;
 }
-// Utility: Determine camera pixel format using v4l2-ctl
+
+std::string rtrim(std::string s) {
+    auto pos = s.find_last_not_of(" \t\r\n");
+    if (pos == std::string::npos) return "";
+    s.erase(pos + 1);
+    return s;
+}
+
 std::string get_camera_pixel_format(const std::string &device) {
     std::string cmd = "v4l2-ctl --device=" + device + " --get-fmt-video 2>&1";
+
     FILE *pipe = popen(cmd.c_str(), "r");
-    if (!pipe)
+    if (!pipe) {
+        std::cerr << "Failed to run v4l2-ctl\n";
         return "";
+    }
 
     char buffer[256];
     std::string output;
@@ -59,9 +69,13 @@ std::string get_camera_pixel_format(const std::string &device) {
     pclose(pipe);
 
     std::smatch match;
-    if (std::regex_search(output, match, std::regex("Pixel Format:\s+'(\\w+)'"))) {
-        std::string fmt = match[1];
-        std::cout << "Detected camera pixel format: " << fmt << std::endl;
+    // Pixel\s+Format\s*:\s+'([^']+)'
+    std::regex re("Pixel\\s+Format\\s*:\\s+'([^']+)'");
+
+    if (std::regex_search(output, match, re) && match.size() > 1) {
+        std::string fmt = match[1].str();   // e.g. "Y16 "
+        fmt = rtrim(fmt);                   // -> "Y16"
+        std::cout << "Detected camera pixel format: '" << fmt << "'" << std::endl;
         return fmt;
     }
 
