@@ -84,8 +84,7 @@ std::string get_camera_pixel_format(const std::string &device) {
 }
 
 // Utility function to generate fastest capture pipeline based on hardware and camera format
-// Utility function to generate fastest capture pipeline based on hardware and camera format
-std::string get_capture_pipeline(const std::string &device, int width, int height, int fps) {
+std::string get_capture_pipeline(const std::string &device, int port, int width, int height, int fps) {
     std::string home = std::getenv("HOME");
     std::string path = home + "/r88_public/device-tree/model";
     std::ifstream model_file(path);
@@ -94,22 +93,47 @@ std::string get_capture_pipeline(const std::string &device, int width, int heigh
         std::getline(model_file, model);
     }
 
-    std::string format = get_camera_pixel_format(device);  // e.g. "Y16" or "MJPG"
-    std::ostringstream pipeline;
-
     bool is_jetson =
         model.find("Orin") != std::string::npos ||
         model.find("Jetson AGX") != std::string::npos ||
         model.find("Jetson Nano") != std::string::npos;
 
+    std::ostringstream pipeline;
+
+    // --- CHECK 1: IS THIS A UDP PORT? ---
+    // If "port" is positive, treat it as a UDP H.265 stream
+    bool is_udp_port = port > 0;
+
+    if (is_udp_port) {
+        
+        // ADDED: 'queue' elements for threading and 'sync=false' to appsink
+        pipeline << "udpsrc port=" << port 
+                 << " caps=\"application/x-rtp, media=(string)video, encoding-name=(string)H265\" ! "
+                 << "queue ! "  // Buffer incoming packets immediately
+                 << "rtpjitterbuffer latency=200 ! "
+                 << "rtph265depay ! h265parse ! ";
+
+        if (is_jetson) {
+            pipeline << "nvv4l2decoder ! nvvidconv ! video/x-raw, format=BGRx ! "
+                     << "videoconvert ! video/x-raw, format=BGR ! appsink sync=false drop=1";
+        } else {
+            // CPU Decode
+            pipeline << "avdec_h265 ! queue ! " // Decoded frames sit in queue before conversion
+                     << "videoconvert ! video/x-raw, format=BGR ! "
+                     << "appsink sync=false drop=1";
+        }
+        
+        std::cout << "Network Pipeline: " << pipeline.str() << std::endl;
+        return pipeline.str();
+    }
+
+    // --- CHECK 2: IS THIS A PHYSICAL V4L2 DEVICE? ---
+    // Existing logic for /dev/videoX
+    
+    std::string format = get_camera_pixel_format(device);  // e.g. "Y16" or "MJPG"
+
     // --- Special case: Attollo Y16 camera ---
     if (format == "Y16") {
-        // This mirrors your working gst-launch pipeline:
-        // v4l2src device=/dev/attollo !
-        //   video/x-raw,format=GRAY16_LE,width=320,height=256,framerate=366/1 !
-        //   videoconvert ! autovideosink
-        //
-        // For OpenCV we end in BGR + appsink.
         pipeline << "v4l2src device=" << device
                  << " ! video/x-raw,format=GRAY16_LE"
                  << ",width=" << width
@@ -181,6 +205,7 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
       filename_(""),
       fps_(0),
       device_(""),
+      port_(-1),
       width_(0),
       height_(0),
       camera_info_path_(""),
@@ -193,6 +218,7 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
     this->declare_parameter("filename", filename_);
     this->declare_parameter("fps", fps_);
     this->declare_parameter("device", device_);
+    this->declare_parameter("port", port_);
     this->declare_parameter("width", width_);
     this->declare_parameter("height", height_);
     this->declare_parameter("camera_info_path", camera_info_path_);
@@ -202,6 +228,7 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
     this->get_parameter("filename", filename_);
     this->get_parameter("fps", fps_);
     this->get_parameter("device", device_);
+    this->get_parameter("port", port_);
     this->get_parameter("width", width_);
     this->get_parameter("height", height_);
     this->get_parameter("camera_info_path", camera_info_path_);
@@ -239,7 +266,7 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
         next_stamp_ = now();
 
     } else {
-        std::string pipeline = get_capture_pipeline(device_, width_, height_, fps_);
+        std::string pipeline = get_capture_pipeline(device_, port_, width_, height_, fps_);
         capture_ = std::make_shared<cv::VideoCapture>(pipeline, cv::CAP_GSTREAMER);
         if (see3cam_flag_) {
             capture_->set(cv::CAP_PROP_FOURCC, cv::VideoWriter::fourcc('Y', '1', '6', ' '));

@@ -32,6 +32,7 @@ class OpencvCamNode : public rclcpp::Node {
     std::string device_;           /* Device name e.g. /dev/video0 */
     int width_;                    /* Device width */
     int height_;                   /* Device height */
+    int port_;                     /* UDP Port for network stream */
     std::string camera_info_path_; /* Camera info path */
     std::string camera_frame_id_;  /* Camera frame id */
 
