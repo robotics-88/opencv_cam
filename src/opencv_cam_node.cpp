@@ -134,13 +134,17 @@ std::string get_capture_pipeline(const std::string &device, int port, int width,
 
     // --- Special case: Attollo Y16 camera ---
     if (format == "Y16") {
+        // Bc it likes to be dumb and show up as 3 different cameras, one with a broken driver, a hack to fix
+        if (width == 0) width = 320;
+        if (height == 0) height = 256;
         pipeline << "v4l2src device=" << device
                  << " ! video/x-raw,format=GRAY16_LE"
                  << ",width=" << width
                  << ",height=" << height
-                 << ",framerate=" << fps << "/1 "
-                 << "! videoconvert ! video/x-raw,format=BGR ! appsink";
-
+                 << " ! queue max-size-buffers=1 leaky=downstream" // Drop old frames if CPU is slow
+                 << " ! videoconvert"
+                 << " ! video/x-raw,format=BGR" 
+                 << " ! appsink sync=false drop=1";
     } else if (format == "MJPG" || format == "JPEG") {
         // MJPEG webcam path, with optional Jetson accel
         if (is_jetson) {
@@ -275,21 +279,6 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
 
         if (!capture_->isOpened()) {
             RCLCPP_ERROR(get_logger(), "cannot open device %s", device_.c_str());
-            return;
-        }
-
-        if (height_ > 0) {
-            capture_->set(cv::CAP_PROP_FRAME_HEIGHT, height_);
-        }
-
-        if (width_ > 0) {
-            capture_->set(cv::CAP_PROP_FRAME_WIDTH, width_);
-        }
-
-        if (fps_ > 0) {
-            capture_->set(cv::CAP_PROP_FPS, fps_);
-        } else {
-            RCLCPP_ERROR(get_logger(), "fps not set, not starting node");
             return;
         }
 
