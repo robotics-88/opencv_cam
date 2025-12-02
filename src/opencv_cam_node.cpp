@@ -101,15 +101,12 @@ std::string get_capture_pipeline(const std::string &device, int port, int width,
     std::ostringstream pipeline;
 
     // --- CHECK 1: IS THIS A UDP PORT? ---
-    // If "port" is positive, treat it as a UDP H.265 stream
     bool is_udp_port = port > 0;
 
     if (is_udp_port) {
-        
-        // ADDED: 'queue' elements for threading and 'sync=false' to appsink
         pipeline << "udpsrc port=" << port 
                  << " caps=\"application/x-rtp, media=(string)video, encoding-name=(string)H265\" ! "
-                 << "queue ! "  // Buffer incoming packets immediately
+                 << "queue ! "
                  << "rtpjitterbuffer latency=200 ! "
                  << "rtph265depay ! h265parse ! ";
 
@@ -117,8 +114,7 @@ std::string get_capture_pipeline(const std::string &device, int port, int width,
             pipeline << "nvv4l2decoder ! nvvidconv ! video/x-raw, format=BGRx ! "
                      << "videoconvert ! video/x-raw, format=BGR ! appsink sync=false drop=1";
         } else {
-            // CPU Decode
-            pipeline << "avdec_h265 ! queue ! " // Decoded frames sit in queue before conversion
+            pipeline << "avdec_h265 ! queue ! "
                      << "videoconvert ! video/x-raw, format=BGR ! "
                      << "appsink sync=false drop=1";
         }
@@ -128,11 +124,8 @@ std::string get_capture_pipeline(const std::string &device, int port, int width,
     }
 
     // --- CHECK 2: IS THIS A PHYSICAL V4L2 DEVICE? ---
-    // Existing logic for /dev/videoX
-    
-    std::string format = get_camera_pixel_format(device);  // e.g. "Y16" or "MJPG"
+    std::string format = get_camera_pixel_format(device); 
 
-    // --- Special case: Attollo Y16 camera ---
     if (format == "Y16") {
         // Bc it likes to be dumb and show up as 3 different cameras, one with a broken driver, a hack to fix
         if (width == 0) width = 320;
@@ -141,12 +134,12 @@ std::string get_capture_pipeline(const std::string &device, int port, int width,
                  << " ! video/x-raw,format=GRAY16_LE"
                  << ",width=" << width
                  << ",height=" << height
-                 << " ! queue max-size-buffers=1 leaky=downstream" // Drop old frames if CPU is slow
+                 << " ! queue max-size-buffers=1 leaky=downstream" 
                  << " ! videoconvert"
                  << " ! video/x-raw,format=BGR" 
                  << " ! appsink sync=false drop=1";
+                 
     } else if (format == "MJPG" || format == "JPEG") {
-        // MJPEG webcam path, with optional Jetson accel
         if (is_jetson) {
             pipeline << "v4l2src device=" << device
                      << " ! image/jpeg, width=" << width
@@ -161,6 +154,26 @@ std::string get_capture_pipeline(const std::string &device, int port, int width,
                      << ", framerate=" << fps << "/1 "
                      << "! jpegdec ! videoconvert ! appsink";
         }
+
+    // --- NEW BLOCK START: Handle H264 Camera ---
+    } else if (format == "H264") {
+        if (is_jetson) {
+            // Jetson Hardware Decode: nvv4l2decoder
+            pipeline << "v4l2src device=" << device
+                     << " ! video/x-h264, width=" << width
+                     << ", height=" << height
+                     << ", framerate=" << fps << "/1"
+                     << " ! nvv4l2decoder ! nvvidconv ! video/x-raw, format=BGRx"
+                     << " ! videoconvert ! video/x-raw, format=BGR ! appsink drop=1";
+        } else {
+            // Laptop CPU Decode: avdec_h264
+            pipeline << "v4l2src device=" << device
+                     << " ! video/x-h264, width=" << width
+                     << ", height=" << height
+                     << ", framerate=" << fps << "/1"
+                     << " ! avdec_h264 ! videoconvert ! video/x-raw, format=BGR ! appsink drop=1";
+        }
+    // --- NEW BLOCK END ---
 
     } else {
         // Generic fallback for other raw formats
