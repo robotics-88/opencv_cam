@@ -127,9 +127,6 @@ std::string get_capture_pipeline(const std::string &device, int port, int width,
     std::string format = get_camera_pixel_format(device); 
 
     if (format == "Y16") {
-        // Bc it likes to be dumb and show up as 3 different cameras, one with a broken driver, a hack to fix
-        if (width == 0) width = 320;
-        if (height == 0) height = 256;
         pipeline << "v4l2src device=" << device
                  << " ! video/x-raw,format=GRAY16_LE"
                  << ",width=" << width
@@ -298,6 +295,10 @@ OpencvCamNode::OpencvCamNode(const rclcpp::NodeOptions &options)
         double width = capture_->get(cv::CAP_PROP_FRAME_WIDTH);
         double height = capture_->get(cv::CAP_PROP_FRAME_HEIGHT);
         device_fps_ = capture_->get(cv::CAP_PROP_FPS);
+        if (device_fps_ > 1000.0) {
+            // Hack to fix attollo driver bug
+            device_fps_ = 30.0;
+        }
 
         RCLCPP_INFO(get_logger(), "Device %s open, width %g, height %g, fps %g", device_.c_str(),
                     width, height, device_fps_);
