@@ -487,7 +487,7 @@ void OpencvCamNode::triggerRecordingCallback(const std_msgs::msg::String::Shared
 }
 
 bool OpencvCamNode::startRecording(const std::string data_directory) {
-    std::string filename = data_directory + "/" + camera_name_ + "_" + get_time_str() + ".mp4";
+    std::string filename = data_directory + "/" + camera_frame_id_ + "_" + get_time_str() + ".mp4";
 
     if (recording_) {
         RCLCPP_WARN(this->get_logger(), "Already recording!");
